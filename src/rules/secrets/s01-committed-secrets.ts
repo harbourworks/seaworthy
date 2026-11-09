@@ -16,8 +16,11 @@ const SKIP_FILE_RE =
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal", "db", "postgres", "mysql", "redis", "mongo", "database"]);
 
+/** "a" or "an", by sound: an AWS key, an npm token, a Stripe key. */
+const article = (name: string) => (/^(AWS|npm|[AEIO])/.test(name) ? "an" : "a");
+
 const FIX_PROMPT = (what: string, file: string) =>
-  `In ${file}, a ${what} is written directly into the code. Move it into an environment ` +
+  `In ${file}, ${article(what)} ${what} is written directly into the code. Move it into an environment ` +
   `variable that is only read on the server (no NEXT_PUBLIC_ or VITE_ prefix), make sure .env ` +
   `files are in .gitignore, and update the code to read it from process.env. Do not print the ` +
   `key's value anywhere.`;
@@ -74,9 +77,9 @@ function scanFile(project: ProjectFiles, file: string, text: string, out: RawFin
         confidence,
         file,
         ...at(m.index! + m[0].indexOf(secret)),
-        why: `This file contains a ${name.toLowerCase()}. Anyone who can read this repo can ${p.impact}.`,
+        why: `This file contains ${article(name)} ${name}. Anyone who can read this repo can ${p.impact}.`,
         fix: `${p.rotate}: it has already been exposed. Then load it from a server-side environment variable instead of the file.`,
-        fixPrompt: FIX_PROMPT(name.toLowerCase(), file),
+        fixPrompt: FIX_PROMPT(name, file),
       });
     }
   }

@@ -13,6 +13,15 @@ export interface Config {
   rules: Record<string, "off" | "on">;
   /** Never make network calls. */
   offline: boolean;
+  /** White-label branding for HTML reports (Agency). */
+  report: ReportBranding;
+}
+
+export interface ReportBranding {
+  agencyName?: string;
+  clientName?: string;
+  /** Path to a PNG, JPEG, WebP or SVG logo, relative to the config file's folder. */
+  logo?: string;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -21,6 +30,7 @@ export const DEFAULT_CONFIG: Config = {
   ignore: [],
   rules: {},
   offline: false,
+  report: {},
 };
 
 export const CONFIG_FILE = "seaworthy.config.json";
@@ -47,7 +57,7 @@ export function mergeConfig(base: Config, raw: unknown, source = "config"): Conf
     throw new ConfigError(`${source} must be a JSON object`);
   }
   const r = raw as Record<string, unknown>;
-  const out: Config = { ...base, ignore: [...base.ignore], rules: { ...base.rules } };
+  const out: Config = { ...base, ignore: [...base.ignore], rules: { ...base.rules }, report: { ...base.report } };
 
   if (r.failOn !== undefined) out.failOn = oneOf(r.failOn, SEVERITIES, "failOn", source);
   if (r.minConfidence !== undefined) {
@@ -72,7 +82,25 @@ export function mergeConfig(base: Config, raw: unknown, source = "config"): Conf
       out.rules[id] = v;
     }
   }
+  if (r.report !== undefined) {
+    if (typeof r.report !== "object" || r.report === null || Array.isArray(r.report)) {
+      throw new ConfigError(`${source}: report must be an object like { "agencyName": "...", "clientName": "...", "logo": "logo.png" }`);
+    }
+    for (const [k, v] of Object.entries(r.report as Record<string, unknown>)) {
+      if (k !== "agencyName" && k !== "clientName" && k !== "logo") {
+        throw new ConfigError(`${source}: report.${k} is not a setting (use agencyName, clientName or logo)`);
+      }
+      if (typeof v !== "string" || v.trim() === "" || v.length > 200) {
+        throw new ConfigError(`${source}: report.${k} must be a short piece of text`);
+      }
+      out.report[k] = v.trim();
+    }
+  }
   return out;
+}
+
+export function hasBranding(b: ReportBranding): boolean {
+  return Boolean(b.agencyName || b.clientName || b.logo);
 }
 
 function oneOf<T extends string>(v: unknown, allowed: readonly T[], key: string, source: string): T {

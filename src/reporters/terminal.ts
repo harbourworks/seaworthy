@@ -18,7 +18,7 @@ export function renderTerminal(result: ScanResult, project: ProjectFiles, versio
   const stack = result.stack.map((s) => STACK_LABELS[s]).join(", ") || "no known stack";
   out.push("");
   out.push(`  ${pc.bold("Seaworthy")} ${pc.dim(version)}  ${pc.dim("·")}  ${basename(result.root)}  ${pc.dim("·")}  ${pc.dim(stack)}`);
-  out.push(pc.dim(`  ${result.filesScanned} files, ${result.rulesRun.length} rules, ${result.durationMs} ms. Nothing left this machine.`));
+  out.push(pc.dim(`  ${result.filesScanned} files, ${result.rulesRun.length} rules, ${result.durationMs} ms. Your code never left this machine.`));
   out.push("");
 
   const counts = SEVERITIES.map((s) => [s, result.findings.filter((f) => f.severity === s).length] as const).filter(([, n]) => n > 0);
