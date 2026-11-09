@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+# Fixture apps deliberately commit their .env files (rule SW-S02 / SW-S01).
+!fixtures/apps/*/.env

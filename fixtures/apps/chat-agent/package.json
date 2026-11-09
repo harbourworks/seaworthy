@@ -1,0 +1,19 @@
+{
+  "name": "chat-agent",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "firebase": "10.7.1",
+    "next": "14.2.3",
+    "openai": "4.24.0",
+    "openai-stream-guard-utils": "1.2.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-markdown-safe-html": "0.4.1"
+  }
+}
