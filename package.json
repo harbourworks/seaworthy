@@ -1,0 +1,47 @@
+{
+  "name": "seaworthy-cli",
+  "version": "0.1.0",
+  "description": "Pre-launch security check for AI-built apps. Runs locally; your code never leaves your machine.",
+  "license": "MIT",
+  "author": "Dynamo Maritime Ltd",
+  "type": "module",
+  "bin": {
+    "seaworthy": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "self-scan": "node dist/cli.js scan ."
+  },
+  "keywords": [
+    "security",
+    "scanner",
+    "supabase",
+    "nextjs",
+    "stripe",
+    "ai",
+    "llm",
+    "cli"
+  ],
+  "dependencies": {
+    "@babel/parser": "7.26.3",
+    "ignore": "6.0.2",
+    "picocolors": "1.1.1"
+  },
+  "devDependencies": {
+    "@babel/types": "7.26.3",
+    "@types/node": "20.17.10",
+    "tsup": "8.3.5",
+    "tsx": "4.19.2",
+    "typescript": "5.6.3",
+    "vitest": "2.1.8"
+  }
+}

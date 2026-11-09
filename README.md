@@ -2,7 +2,7 @@
 
 A local, open-source pre-launch security check for AI-built apps.
 
-**Status: pre-build.** This repo is private while setup finishes. Nothing here is usable yet.
+**Status: early build.** Private. Two rules work end to end (SW-S01, SW-D01); `npm run build && node dist/cli.js <path>`.
 
 - Spec: kept in the private planning repo (`harbourworks/dynamo-planning`), section 7.
 - Progress: [BUILD-LOG.md](BUILD-LOG.md).
