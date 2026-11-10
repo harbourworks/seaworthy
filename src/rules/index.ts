@@ -9,11 +9,12 @@ import { d03FirebaseOpen } from "./firebase/d03-firebase-open.js";
 import { d04StorageOpen } from "./firebase/d04-storage-open.js";
 import { p01WebhookUnverified } from "./payments/p01-webhook-unverified.js";
 import { b01SecurityHeaders } from "./browser/b01-security-headers.js";
+import { a01NoAuthCheck } from "./auth/a01-no-auth-check.js";
 import { a05SqlInjection } from "./injection/a05-sql-injection.js";
 import { l01PromptInjection } from "./llm/l01-prompt-injection.js";
 import { l02ModelOutputSink } from "./llm/l02-model-output-sink.js";
 
-export const RULES: Rule[] = [s01CommittedSecrets, s02EnvCommitted, s03SecretInBrowser, s04LlmKeyInClient, d01RlsMissing, d02PolicyAllowsAll, d03FirebaseOpen, d04StorageOpen, p01WebhookUnverified, a05SqlInjection, l01PromptInjection, l02ModelOutputSink, b01SecurityHeaders];
+export const RULES: Rule[] = [s01CommittedSecrets, s02EnvCommitted, s03SecretInBrowser, s04LlmKeyInClient, d01RlsMissing, d02PolicyAllowsAll, d03FirebaseOpen, d04StorageOpen, p01WebhookUnverified, a01NoAuthCheck, a05SqlInjection, l01PromptInjection, l02ModelOutputSink, b01SecurityHeaders];
 
 export function findRule(id: string): Rule | undefined {
   const want = id.trim().toUpperCase();

@@ -28,7 +28,8 @@ describe("notes-saas fixture", () => {
   const r = scan(join(FIXTURES, "notes-saas"), DEFAULT_CONFIG, RULES);
 
   it("finds exactly the planted secret and Supabase flaws", () => {
-    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01|B01|A05)/.test(s))).toEqual([
+    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01|B01|A0[15])/.test(s))).toEqual([
+      "SW-A01 app/api/notes/[id]/route.ts:21",
       "SW-A05 app/api/search/route.ts:13",
       "SW-B01 next.config.js:2",
       "SW-D01 supabase/migrations/0001_init.sql:20",
@@ -76,6 +77,9 @@ describe("chat-agent fixture", () => {
   });
   it("does not flag the chat page's fixed system prompt (decoy)", () => {
     expect(r.findings.some((f) => f.ruleId === "SW-L01" && f.file === "app/chat/page.tsx")).toBe(false);
+  });
+  it("finds the unauthenticated assistant route and nothing else", () => {
+    expect(ids(r).filter((s) => s.startsWith("SW-A01"))).toEqual(["SW-A01 app/api/assistant/route.ts:34"]);
   });
   it("finds the open Firestore and Storage rules", () => {
     expect(ids(r).filter((s) => /^SW-D0[34]/.test(s))).toEqual(["SW-D03 firestore.rules:5", "SW-D04 storage.rules:5"]);
@@ -935,5 +939,91 @@ describe("SW-L02 model output rendered as HTML or run as code", () => {
           "child_process.exec(c.choices[0].message.content);\nel.innerHTML = '<b>' + title + '</b>';\n",
       }).all,
     ).toEqual([]);
+  });
+});
+
+describe("SW-A01 API route with no auth check", () => {
+  const next = { "package.json": JSON.stringify({ dependencies: { next: "14.2.3" } }) };
+  const run = (files: Record<string, string>) => {
+    const p = project({ ...next, ...files });
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-A01");
+    return { all: mine.map((f) => `${f.file}:${f.line} ${f.confidence}`).sort(), titles: mine.map((f) => f.title).sort() };
+  };
+  const write = "export async function POST(req: Request) {\n  const body = await req.json();\n  await db.from('notes').insert(body);\n  return Response.json({ ok: true });\n}\n";
+
+  it("vulnerable: a write with no check is high, a read is medium", () => {
+    const r = run({
+      "app/api/notes/route.ts": write + "export async function GET() {\n  return Response.json(await db.from('notes').select());\n}\n",
+      "app/(admin)/api/users/[id]/route.ts": "export const DELETE = async (req: Request) => {\n  await prisma.user.delete({ where: { id: 1 } });\n};\n",
+    });
+    expect(r.all).toEqual(["app/(admin)/api/users/[id]/route.ts:1 high", "app/api/notes/route.ts:1 high", "app/api/notes/route.ts:6 medium"]);
+    expect(r.titles).toContain("DELETE /api/users/[id] has no auth check");
+  });
+  it("fixed: the common auth libraries", () => {
+    const body = (check: string) => `export async function POST(req: Request) {\n  ${check}\n  await db.from('notes').insert({});\n}\n`;
+    expect(
+      run({
+        "app/api/a/route.ts": body("const user = await getUser(req); if (!user) return new Response(null, { status: 401 });"),
+        "app/api/b/route.ts": body("const { userId } = auth(); if (!userId) return new Response(null, { status: 401 });"),
+        "app/api/c/route.ts": body("const session = await getServerSession(authOptions); if (!session) return;"),
+        "app/api/d/route.ts": body("const { data } = await supabase.auth.getUser(); if (!data.user) return;"),
+        "app/api/e/route.ts": body("const user = await currentUser();"),
+        "app/api/f/route.ts": body("const decoded = await admin.auth().verifyIdToken(token);"),
+        "app/api/g/route.ts": body("if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return new Response(null, { status: 401 });"),
+      }).all,
+    ).toEqual([]);
+  });
+  it("fixed: auth wrappers and helpers, local or imported", () => {
+    expect(
+      run({
+        "app/api/a/route.ts": "export const POST = withAuth(async (req) => { await db.insert(); });\n",
+        "app/api/b/route.ts": "export const POST = auth(async (req) => { await db.insert(); });\n",
+        "app/api/c/route.ts": "async function guard() { const s = await getServerSession(); if (!s) throw new Error(); return s; }\nexport async function POST() { await guard(); await db.insert(); }\n",
+        "lib/guards.ts": "export async function mustBeAdmin() {\n  const s = await getServerSession(authOptions);\n  if (s?.user.role !== 'admin') throw new Error('no');\n}\n",
+        "app/api/d/route.ts": "import { mustBeAdmin } from '@/lib/guards';\nexport async function DELETE() { await mustBeAdmin(); await db.delete(); }\n",
+      }).all,
+    ).toEqual([]);
+  });
+  it("leaves public-by-design routes alone", () => {
+    expect(
+      run({
+        "app/api/webhooks/stripe/route.ts": write,
+        "app/api/auth/[...nextauth]/route.ts": "export const POST = handler;\nexport async function GET() { await db.insert(); }\n",
+        "app/api/health/route.ts": "export async function GET() { return Response.json({ ok: true }); }\n",
+        "app/api/hooks/clerk/route.ts": "import { Webhook } from 'svix';\n" + write,
+        "app/api/assistant/route.ts": "export async function OPTIONS() { return new Response(null); }\n",
+      }).all,
+    ).toEqual([]);
+  });
+  it("counts middleware that enforces auth on the route's path", () => {
+    const mw = (matcher: string) =>
+      "export default clerkMiddleware((auth, req) => { if (isProtected(req)) auth().protect(); });\n" +
+      `export const config = { matcher: ${matcher} };\n`;
+    expect(run({ "middleware.ts": mw("['/api/:path*']"), "app/api/notes/route.ts": write }).all).toEqual([]);
+    expect(run({ "middleware.ts": mw("['/dashboard/:path*']"), "app/api/notes/route.ts": write }).all).toEqual([
+      "app/api/notes/route.ts:1 high",
+    ]);
+    // Middleware that only refreshes a session doesn't keep anyone out.
+    expect(
+      run({ "middleware.ts": "export async function middleware(req) { return await updateSession(req); }\n", "app/api/notes/route.ts": write }).all,
+    ).toEqual(["app/api/notes/route.ts:1 high"]);
+  });
+  it("pages/api handlers and server actions", () => {
+    expect(
+      run({
+        "pages/api/notes.ts": "export default async function handler(req, res) {\n  await db.notes.create({ data: req.body });\n  res.json({});\n}\n",
+        "pages/api/list.ts": "export default async function handler(req, res) { res.json(await db.notes.findMany()); }\n",
+        "app/actions.ts": "'use server';\nexport async function deleteNote(id: string) {\n  await db.notes.delete({ where: { id } });\n}\n" +
+          "export async function rename(id: string, t: string) {\n  const user = await getCurrentUser();\n  await db.notes.update({});\n}\n",
+      }).all,
+    ).toEqual(["app/actions.ts:2 medium", "pages/api/list.ts:1 medium", "pages/api/notes.ts:1 high"]);
+  });
+  it("says when a sibling handler does check", () => {
+    const r = run({
+      "app/api/notes/route.ts": "export async function GET(req: Request) { const u = await getUser(req); }\n" + write,
+    });
+    expect(r.all).toEqual(["app/api/notes/route.ts:2 high"]);
   });
 });
