@@ -19,12 +19,14 @@ const AUTH_CALL_RE =
 export const AUTH_WRAPPER_RE = /^(with\w*(Auth|Session|User)\w*|auth|protect(ed)?|requireAuth|authenticated|withApiAuthRequired|authMiddleware)$/i;
 /** Checking a shared secret or token by hand counts too. */
 const HEADER_CHECK_RE =
-  /headers\.get\(\s*["'`](authorization|x-api-key|x-cron-secret|x-webhook-secret|x-admin-token)["'`]|headers\[\s*["'`]authorization["'`]\s*\]|headers\.authorization\b|cookies\(\)\.get\(\s*["'`][^"'`]*(session|token|auth)[^"'`]*["'`]|process\.env\.\w*(SECRET|TOKEN|API_KEY)\w*[^\n;]*(!==?|===?)|(!==?|===?)[^\n;]*process\.env\.\w*(SECRET|TOKEN|API_KEY)/i;
+  /headers\.get\(\s*["'`](authorization|x-api-key|x-cron-secret|x-webhook-secret|x-admin-token)["'`]|headers\[\s*["'`]authorization["'`]\s*\]|headers\.authorization\b|cookies(\(\))?\.get\(\s*(["'`][^"'`]*(session|token|auth|sid)[^"'`]*["'`]|[\w.]*(AUTH|SESSION|TOKEN|Session|Auth|Token)[\w.]*\s*\))|process\.env\.\w*(SECRET|TOKEN|API_KEY)\w*[^\n;]*(!==?|===?)|(!==?|===?)[^\n;]*process\.env\.\w*(SECRET|TOKEN|API_KEY)/i;
 /** Routes that are public by design. Webhooks are checked by signature instead (SW-P01). */
 const PUBLIC_PATH_RE =
-  /(^|\/)(webhooks?|[^/]*-webhooks?|auth|login|log-in|signin|sign-in|signup|sign-up|register|logout|sign-out|signout|callback|oauth|reset-password|forgot-password|verify-email|confirm|health|healthz|status|ping|og|opengraph-image|sitemap|robots|\[\.\.\.nextauth\]|\[\.\.\.auth\])(\/|$)/i;
+  /(^|\/)([\w-]*-)?(webhooks?|auth|login|log-in|signin|sign-in|signup|sign-up|register|logout|sign-out|signout|callback|oauth|reset-password|forgot-password|verify-email|confirm|health|healthz|status|ping|og|opengraph-image|sitemap|robots)(-[\w-]*)?(\/|$)|\[\.\.\.(nextauth|auth)\]/i;
 /** POSTs that are often meant to be public: contact forms, newsletters, analytics. */
 const OPEN_FORM_RE = /(^|\/)(contact|newsletter|subscribe|waitlist|feedback|track|analytics|events|beacon|vitals|log|csp-report)(\/|$)/i;
+const CAPTCHA_RE = /recaptcha|turnstile|hcaptcha|captcha/i;
+const SETS_AUTH_COOKIE_RE = /cookies\.set\(\s*[\w."'`-]*(auth|session|token)/i;
 const SIGNATURE_RE = /constructEvent|stripe-signature|svix|webhook-signature|x-hub-signature|verifySignature|validateSignature/i;
 
 export const a01NoAuthCheck: Rule = {
@@ -72,8 +74,17 @@ export const a01NoAuthCheck: Rule = {
       for (const h of all) {
         if (checked.has(h)) continue;
         h.siblingChecks = checked.size > 0;
-        const writes = h.method ? WRITE_METHODS.has(h.method) : looksLikeWrite(text.slice(h.fn.start ?? 0, h.fn.end ?? 0));
+        const fnText = text.slice(h.fn.start ?? 0, h.fn.end ?? 0);
+        if (CAPTCHA_RE.test(fnText) || SETS_AUTH_COOKIE_RE.test(fnText)) continue; // public form or login endpoint
+        const fnBody = text.slice(h.fn.start ?? 0, h.fn.end ?? 0);
+        // High only when the handler does something with consequences: a write method alone
+        // (a POST that just computes or returns simulated data) is medium.
+        const consequential = looksLikeWrite(fnBody) || consequence(fnBody) !== "";
+        const writes = (h.method ? WRITE_METHODS.has(h.method) : true) && consequential;
         let confidence: Confidence = writes ? "high" : "medium";
+        const proxies = /\bfetch\(\s*[\w`$.{}/+]*(upstream|backend|api_?url|server_?api|base_?url)/i.test(text.slice(h.fn.start ?? 0, h.fn.end ?? 0)) ||
+          /process\.env\.\w*(API_URL|BACKEND|UPSTREAM)\w*/.test(text);
+        if (proxies) confidence = "medium";
         if (serverActions || (url && OPEN_FORM_RE.test(url))) confidence = "medium";
         const body = text.slice(h.fn.start ?? 0, h.fn.end ?? 0);
         const label = serverActions ? `Server action ${h.name}` : `${h.method ?? "Handler"} ${url ?? file}`;

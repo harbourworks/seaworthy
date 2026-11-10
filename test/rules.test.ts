@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { scan } from "../src/core/scan.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { RULES } from "../src/rules/index.js";
+import { redact } from "../src/rules/secrets/patterns.js";
 
 const FIXTURES = resolve(__dirname, "../fixtures/apps");
 const ids = (r: ReturnType<typeof scan>) => r.findings.map((f) => `${f.ruleId} ${f.file}:${f.line}`).sort();
@@ -1285,5 +1286,50 @@ describe("SW-L04 MCP server config", () => {
         ".vscode/mcp.json",
       ).all,
     ).toEqual([]);
+  });
+});
+
+describe("SW-B01 reads proxy config too", () => {
+  it("counts headers set in nginx, wherever the config lives", () => {
+    const p = project({
+      "frontend/package.json": JSON.stringify({ dependencies: { next: "14.2.3" } }),
+      "frontend/next.config.js": "module.exports = {};\n",
+      "infrastructure/docker/nginx.azure.conf":
+        "add_header Content-Security-Policy \"default-src 'self'\";\nadd_header X-Frame-Options DENY;\nadd_header Strict-Transport-Security max-age=63072000;\n",
+    });
+    const r = scan(p.root, DEFAULT_CONFIG, RULES);
+    p.done();
+    expect(r.findings.filter((f) => f.ruleId === "SW-B01")).toEqual([]);
+  });
+});
+
+describe("findings from scanning real projects (10 Nov 2026)", () => {
+  it("masks a database password that contains @", () => {
+    const pw = `P@ss${rand(10)}`;
+    expect(redact(`url: "postgresql://admin:${pw}@db.example.net:5432/app"`)).not.toContain(pw.slice(1));
+  });
+  it("rates a password for a Docker-internal host as medium", () => {
+    const p = project({ "scripts/report.py": `DB = "postgresql://postgres:${rand(14)}@etl-postgres:5432/analytics"\n` });
+    const r = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    expect(r.findings.filter((f) => f.ruleId === "SW-S01").map((f) => f.confidence)).toEqual(["medium"]);
+  });
+  it("SW-A01 leaves login endpoints, CAPTCHA forms and cookie-checked routes alone, and rates proxies medium", () => {
+    const p = project({
+      "package.json": JSON.stringify({ dependencies: { next: "14.2.3" } }),
+      "app/api/deck-auth/route.ts": "export async function POST(req) { const ok = check(code); }\n",
+      "app/api/apply/route.ts": "export async function POST(req) { await verifyRecaptchaToken(t); await db.insert(row); }\n",
+      "app/api/upload/route.ts": "export async function POST(req) { const s = req.cookies.get(PARTNER_AUTH_COOKIE)?.value; await db.insert(x); }\n",
+      "app/api/login-portal/route.ts": "export async function POST(req) { res.cookies.set(SESSION_COOKIE, token); }\n",
+      "app/api/graph/run/route.ts":
+        "const API = process.env.SERVER_API_URL;\nexport async function POST(req) { return fetch(`${API}/run`, { method: 'POST' }); }\n",
+      "app/api/sim/route.ts": "export async function POST(req) { return Response.json({ answer: simulate() }); }\n",
+    });
+    const r = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    expect(r.findings.filter((f) => f.ruleId === "SW-A01").map((f) => `${f.file} ${f.confidence}`).sort()).toEqual([
+      "app/api/graph/run/route.ts medium",
+      "app/api/sim/route.ts medium",
+    ]);
   });
 });

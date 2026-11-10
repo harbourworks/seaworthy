@@ -5,7 +5,7 @@ import type { RawFinding, Rule } from "../types.js";
 const NEXT_CONFIG_RE = /(^|\/)next\.config\.(js|mjs|cjs|ts|mts)$/;
 /** Other places a Next.js app can set response headers. */
 const HEADER_SOURCES_RE =
-  /(^|\/)(middleware\.[jt]s|src\/middleware\.[jt]s|vercel\.json|netlify\.toml|public\/_headers|_headers|firebase\.json|staticwebapp\.config\.json)$/;
+  /(^|\/)(middleware\.[jt]s|src\/middleware\.[jt]s|vercel\.json|netlify\.toml|public\/_headers|_headers|firebase\.json|staticwebapp\.config\.json)$|(^|\/)(nginx[^/]*\.conf|[^/]+\.nginx|default\.conf|Caddyfile|\.htaccess|httpd\.conf|apache2?\.conf|traefik[^/]*\.ya?ml)$|(^|\/)(nginx|conf\.d|sites-(available|enabled))\/[^/]+\.conf$/;
 /** Packages that set security headers for you. */
 const HEADER_PACKAGES = ["@next-safe/middleware", "next-safe", "next-secure-headers", "helmet", "nosecone", "@nosecone/next"];
 

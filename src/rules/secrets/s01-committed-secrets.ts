@@ -116,7 +116,8 @@ function scanFile(project: ProjectFiles, file: string, text: string, out: RawFin
     out.push({
       title: "Database password committed",
       severity: "critical",
-      confidence: "high",
+      // A host with no dots is a Docker or internal service name, usually a development default.
+      confidence: host.includes(".") ? "high" : "medium",
       file,
       ...at(m.index! + m[0].indexOf(password)),
       why: `This connection string includes the password for the database at ${host}. Anyone who can read this repo can connect to it directly, with no app or row-level security in the way.`,

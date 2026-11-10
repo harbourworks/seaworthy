@@ -159,7 +159,7 @@ export const JWT_RE = /\b(eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9
 
 /** `scheme://user:password@host`. Group 1 = whole URL, group 2 = password, group 3 = host. */
 export const DB_URL_RE =
-  /\b((?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?):\/\/[^\s:/@'"`]+:([^\s@'"`]+)@([^\s/:'"`?]+)[^\s'"`]*)/g;
+  /\b((?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?):\/\/[^\s:/@'"`]+:([^\s'"`]+)@([^\s/:'"`?@]+)[^\s'"`]*)/g;
 
 /** Google API keys: Firebase web config keys are public by design; others (Gemini) are not. */
 export const GOOGLE_KEY_RE = /\b(AIza[0-9A-Za-z_-]{35})\b/g;
@@ -205,7 +205,11 @@ export function redact(line: string): string {
     );
   }
   out = out.replace(new RegExp(JWT_RE.source, "g"), (m) => m.slice(0, 12) + "•".repeat(8));
-  out = out.replace(new RegExp(DB_URL_RE.source, "g"), (m, _u: string, pw: string) => m.replace(":" + pw + "@", ":" + "•".repeat(8) + "@"));
+  out = out.replace(new RegExp(DB_URL_RE.source, "g"), (m, _u: string, pw: string, host: string) => {
+    const end = m.lastIndexOf("@" + host);
+    const start = end - pw.length;
+    return start > 0 ? m.slice(0, start) + "•".repeat(8) + m.slice(end) : m;
+  });
   out = out.replace(new RegExp(GOOGLE_KEY_RE.source, "g"), (m) => mask(m));
   return out;
 }
