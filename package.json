@@ -1,7 +1,30 @@
 {
   "name": "seaworthy-cli",
   "version": "0.1.0",
-  "description": "Pre-launch security check for AI-built apps. Runs locally; your code never leaves your machine.",
+  "description": "Pre-launch security check for AI-built apps: leaked keys, open database rules, unprotected API routes, unsafe LLM code. Runs locally; your code never leaves your machine.",
+  "keywords": [
+    "security",
+    "scanner",
+    "sast",
+    "supabase",
+    "firebase",
+    "nextjs",
+    "stripe",
+    "llm",
+    "mcp",
+    "ai",
+    "vibe-coding",
+    "cli"
+  ],
+  "homepage": "https://dynamomaritime.com/seaworthy",
+  "bugs": {
+    "url": "https://dynamomaritime.com/support",
+    "email": "support@dynamomaritime.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/harbourworks/seaworthy.git"
+  },
   "license": "SEE LICENSE IN LICENSE",
   "author": "Dynamo Maritime Ltd",
   "type": "module",
@@ -22,16 +45,6 @@
     "typecheck": "tsc --noEmit",
     "self-scan": "node dist/cli.js scan ."
   },
-  "keywords": [
-    "security",
-    "scanner",
-    "supabase",
-    "nextjs",
-    "stripe",
-    "ai",
-    "llm",
-    "cli"
-  ],
   "dependencies": {
     "@babel/parser": "7.26.3",
     "ignore": "6.0.2",
