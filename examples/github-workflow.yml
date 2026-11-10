@@ -1,0 +1,21 @@
+# Copy to .github/workflows/seaworthy.yml. (Or run `npx seaworthy-cli init`, which writes one for you.)
+name: Seaworthy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write # to show findings in the Security tab and on pull requests
+
+jobs:
+  seaworthy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: harbourworks/seaworthy@v0.5.0
+        with:
+          fail-on: high # optional; defaults to seaworthy.config.json, then high
+          # licence: ${{ secrets.SEAWORTHY_LICENCE }} # Pro or Agency, optional
