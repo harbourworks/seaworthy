@@ -25,6 +25,31 @@ export const a04WildcardCors: Rule = {
 
   check({ project }) {
     const out: RawFinding[] = [];
+    // nginx: add_header Access-Control-Allow-Origin $http_origin | "*" with credentials, and no origin allow-list.
+    for (const file of project.files.filter((f) => /(^|\/)(nginx[^/]*\.conf|[^/]+\.nginx|default\.conf)$|(^|\/)(nginx|conf\.d|sites-(available|enabled))\/[^/]+\.conf$/.test(f))) {
+      const text = project.read(file);
+      if (!text || !/add_header\s+Access-Control-Allow-Credentials\s+"?true/i.test(text)) continue;
+      if (/\bmap\s+\$http_origin\b|\bif\s*\(\s*\$http_origin\s*~/.test(text)) continue; // an allow-list
+      for (const m of text.matchAll(/add_header\s+Access-Control-Allow-Origin\s+("?\*"?|"?\$http_origin"?)/gi)) {
+        const reflect = /http_origin/.test(m[1]!);
+        out.push({
+          file,
+          ...project.position(file, m.index!),
+          title: reflect ? "nginx echoes back any origin, with credentials" : "nginx allows every origin, with credentials",
+          why: reflect
+            ? `This nginx config copies the request's Origin into Access-Control-Allow-Origin and allows credentials, so any ` +
+              `website a signed-in user visits can call this API as them and read the answers.`
+            : `This nginx config allows every origin together with credentials. Browsers reject the pair, and the usual "fix" ` +
+              `is echoing the Origin back, which lets any website call the API as a signed-in user.`,
+          fix:
+            `Allow only your own origins: \`map $http_origin $cors_origin { default ""; "https://app.example.com" $http_origin; }\` ` +
+            `then \`add_header Access-Control-Allow-Origin $cors_origin always;\` and \`add_header Vary Origin always;\`.`,
+          fixPrompt:
+            `In ${file}, nginx reflects any Origin with Access-Control-Allow-Credentials true. Replace it with a map of allowed ` +
+            `origins (my app's own domains), send Access-Control-Allow-Origin only for those, and add Vary: Origin.`,
+        });
+      }
+    }
     for (const file of codeFiles(project)) {
       const text = project.read(file);
       if (!text || !/access-control-allow-origin|\bcors\s*\(/i.test(text)) continue;

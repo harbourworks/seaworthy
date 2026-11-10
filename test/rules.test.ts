@@ -1333,3 +1333,22 @@ describe("findings from scanning real projects (10 Nov 2026)", () => {
     ]);
   });
 });
+
+describe("SW-A04 in nginx config", () => {
+  const run = (conf: string) => {
+    const p = project({ "services/gateway/nginx.conf": conf });
+    const r = scan(p.root, DEFAULT_CONFIG, RULES);
+    p.done();
+    return r.findings.filter((f) => f.ruleId === "SW-A04").map((f) => `${f.line} ${f.title}`);
+  };
+  it("flags a reflected origin with credentials", () => {
+    expect(run("location /api {\n  add_header Access-Control-Allow-Origin $http_origin always;\n  add_header Access-Control-Allow-Credentials \"true\" always;\n}\n")).toEqual([
+      "2 nginx echoes back any origin, with credentials",
+    ]);
+  });
+  it("accepts an origin allow-list", () => {
+    expect(
+      run("map $http_origin $cors { default \"\"; \"https://app.example.com\" $http_origin; }\nadd_header Access-Control-Allow-Origin $http_origin;\nadd_header Access-Control-Allow-Credentials true;\n"),
+    ).toEqual([]);
+  });
+});
