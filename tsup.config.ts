@@ -6,6 +6,7 @@ export default defineConfig({
   target: "node20",
   platform: "node",
   clean: true,
+  metafile: true,
   banner: {
     js: [
       "#!/usr/bin/env node",
