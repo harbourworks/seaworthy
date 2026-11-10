@@ -13,6 +13,7 @@ export type Feature =
   | "history" // scan history and trends (.seaworthy/history.json)
   | "compare" // before/after comparison of two scans
   | "pr-checks" // scan --baseline <ref>: report only what a pull request introduces
+  | "alerts" // scan --notify: Slack, webhook and email alerts for scheduled scans
   | "white-label" // agency logo, agency name and client name on reports
   | "scan-all"; // scan --all: every project in a folder, one combined report
 
@@ -27,7 +28,7 @@ export interface TierInfo {
   features: readonly Feature[];
 }
 
-const PRO_FEATURES: readonly Feature[] = ["html-report", "history", "compare", "pr-checks"];
+const PRO_FEATURES: readonly Feature[] = ["html-report", "history", "compare", "pr-checks", "alerts"];
 
 export const TIER_INFO: Record<Tier, TierInfo> = {
   free: { name: "Free", pricePerYearGbp: 0, machines: 0, features: [] },
@@ -45,6 +46,7 @@ export const FEATURE_LABELS: Record<Feature, string> = {
   history: "Scan history and trends",
   compare: "Before/after comparison",
   "pr-checks": "Pull-request checks that show only new problems",
+  alerts: "Scheduled scans with Slack and email alerts",
   "white-label": "White-label reports",
   "scan-all": "Scanning every project in a folder (--all)",
 };
@@ -52,6 +54,7 @@ export const FEATURE_LABELS: Record<Feature, string> = {
 /** A few words each, for one-line plan summaries (seaworthy buy). Pull-request checks lead. */
 export const FEATURE_SHORT: Record<Feature, string> = {
   "pr-checks": "pull-request checks",
+  alerts: "scheduled alerts",
   "html-report": "HTML reports",
   history: "history",
   compare: "compare",

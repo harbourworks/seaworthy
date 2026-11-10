@@ -42,7 +42,7 @@ describe("seaworthy buy", () => {
     expect(await c.run("buy")).toBe(0);
     const t = c.all();
     expect(t).toMatch(/Free\s+£0/);
-    expect(t).toMatch(/Pro\s+£12\/month or £99\/year\s+\+ pull-request checks, HTML reports, history, compare · 2 machines/);
+    expect(t).toMatch(/Pro\s+£12\/month or £99\/year\s+\+ pull-request checks, HTML reports, history, compare, scheduled alerts · 2 machines/);
     expect(t).toMatch(/Agency\s+£349\/year\s+\+ white-label reports, --all · 10 machines/);
     expect(t).toContain(`Buy: ${PURCHASE_URL}`);
     expect(t).toContain(`Get your key: ${PORTAL_URL}`);

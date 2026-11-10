@@ -4,6 +4,7 @@ import { basename, relative, resolve, sep } from "node:path";
 import pc from "picocolors";
 import { ConfigError, hasBranding, loadConfig, mergeConfig, type Config } from "../core/config.js";
 import { scan, type ScanResult } from "../core/scan.js";
+import type { Finding } from "../core/finding.js";
 import { ProjectFiles } from "../core/project.js";
 import { excluder, walk } from "../core/walk.js";
 import type { OsvResult } from "../deps/osv.js";
@@ -13,6 +14,7 @@ import { renderMarkdown, type MarkdownOptions } from "../reporters/markdown.js";
 import { BaselineError, extractBaseline } from "../core/baseline.js";
 import { diffFindings } from "../pro/compare.js";
 import { prFailed, prJson, renderPrMarkdown, renderPrTerminal, type PrCheck } from "../pro/pr.js";
+import { AlertConfigError, NOTIFY_ON, decide, destinationsFromEnv, githubContext, hasDestination, sendAlerts, type Destinations, type NotifyOn } from "../pro/alerts.js";
 import { initProject } from "./init.js";
 import { agentTargets, writeAgentTarget } from "./agent.js";
 import { FEATURE_LABELS, FEATURE_SHORT, TIER_INFO, hasFeature, priceLabel, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
@@ -61,6 +63,7 @@ const HELP = `
     seaworthy init [path]            Add a config file and a GitHub Actions workflow
       --pr                           ...that comments on pull requests with only
                                      the problems they introduce         ${pc.dim("Pro")}
+      --schedule                     ...a weekly scan that alerts on new problems ${pc.dim("Pro")}
       --agent                        Add a security-check step to your AI assistant's
                                      rules file (asks first; --yes to skip asking)
     seaworthy explain <rule-id>      Explain one rule and how to fix it
@@ -93,6 +96,9 @@ const HELP = `
       --from <scan#> --to <scan#>    Pick two scans (default: the last two)
     seaworthy scan --baseline <ref>  Only what's new since <ref>, e.g. a pull
                                      request against origin/main         ${pc.dim("Pro")}
+    seaworthy scan --notify          Send an alert to Slack, a webhook or email (set up
+                                     with SEAWORTHY_* variables; see docs)  ${pc.dim("Pro")}
+      --notify-on new|failing|always Default new: only when new problems appear
     seaworthy scan <folder> --all    Every project in a folder, one report ${pc.dim("Agency")}
     --no-history                     Don't record this scan in history
 
@@ -109,6 +115,8 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
       options: {
         format: { type: "string" },
         baseline: { type: "string" },
+        notify: { type: "boolean" },
+        "notify-on": { type: "string" },
         output: { type: "string" },
         "fail-on": { type: "string" },
         "min-confidence": { type: "string" },
@@ -123,6 +131,7 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
         version: { type: "boolean", short: "v" },
         force: { type: "boolean" },
         pr: { type: "boolean" },
+        schedule: { type: "boolean" },
         "no-open": { type: "boolean" },
         agent: { type: "boolean" },
         yes: { type: "boolean", short: "y" },
@@ -207,6 +216,24 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
     throw err;
   }
 
+  // Alerts: check the set-up before scanning, so a typo fails fast.
+  let destinations: Destinations | null = null;
+  const notifyOn = ((values["notify-on"] as string | undefined) ?? "new") as NotifyOn;
+  if (values.notify) {
+    const bad = (m: string) => (deps.err(pc.red(`  ${m}`)), 2);
+    if (!(NOTIFY_ON as readonly string[]).includes(notifyOn)) return bad("--notify-on must be new, failing or always.");
+    if (values.all) return bad("--notify sends one alert for one project, so it can't be combined with --all.");
+    if (values.offline || topConfig.offline) return bad("--notify needs the network, so it can't be combined with --offline.");
+    try {
+      destinations = destinationsFromEnv(deps.env);
+    } catch (err) {
+      if (err instanceof AlertConfigError) return bad(err.message);
+      throw err;
+    }
+    if (!hasDestination(destinations)) {
+      return bad("--notify has nowhere to send. Set SEAWORTHY_SLACK_WEBHOOK, SEAWORTHY_WEBHOOK_URL, or SEAWORTHY_SMTP_URL with SEAWORTHY_EMAIL_TO.");
+    }
+  }
   // Free users have no licence, so this makes no network call. Logged-in users are
   // checked online at most once a day; the result is cached with a 14-day offline grace.
   const licence = await resolveLicence({
@@ -261,6 +288,9 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
   const useBaseline = baselineRef !== undefined && allow("pr-checks", "Ran a full scan instead.");
   let prCheck: PrCheck | null = null;
 
+  const useAlerts = Boolean(destinations) && allow("alerts", "Scanned without sending an alert.");
+  let lastSaved: { scan: ReturnType<typeof recordScan>; comparison: Comparison | null } | null = null;
+
   const recordHistory = !values["no-history"] && hasFeature(tier, "history");
   const scanned: ReportProject[] = [];
   for (const p of projects) {
@@ -301,11 +331,37 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
       const saved = recordScan(p.dir, result.findings, deps.now());
       if (!saved) notes.push(`Couldn't save scan history in ${p.dir} (folder not writable).`);
       if (previous && saved) comparison = compareScans(previous, saved);
+      lastSaved = { scan: saved, comparison };
     }
     scanned.push({ name: multi ? p.name : basename(p.dir), result, project, comparison });
   }
 
   const failed = prCheck ? prFailed(prCheck) : scanned.some((s) => s.result.failed);
+
+  let alertFailed = false;
+  if (useAlerts && destinations && scanned[0]) {
+    const s = scanned[0];
+    // What's new since the last recorded scan. The saved scan lists findings in the same order
+    // as the result, so a compared entry maps back to its full finding by position.
+    let added: Finding[] | null = null;
+    let fixedCount = 0;
+    if (lastSaved?.scan && lastSaved.comparison) {
+      const index = new Map(lastSaved.scan.findings.map((f, i) => [f, i] as const));
+      added = lastSaved.comparison.added.map((h) => s.result.findings[index.get(h)!]!).filter(Boolean);
+      fixedCount = lastSaved.comparison.fixed.length;
+    }
+    const input = { project: s.name, version: VERSION, failOn: topConfig.failOn, findings: s.result.findings, added, fixedCount, ...githubContext(deps.env) };
+    const decision = decide(input, notifyOn);
+    if (!decision.send) {
+      notes.push(notifyOn === "new" ? "No new problems since the last scan, so no alert was sent." : "Nothing to report, so no alert was sent.");
+    } else {
+      for (const r of await sendAlerts(destinations, input, decision, { fetch: deps.fetch ?? fetch, now: deps.now() })) {
+        notes.push(r.message);
+        if (!r.ok) alertFailed = true;
+      }
+    }
+  }
+  const exitCode = alertFailed ? 2 : failed ? 1 : 0;
 
   if (format === "json") {
     if (prCheck) {
@@ -314,7 +370,7 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
     } else {
       deps.out(scanned.length === 1 && !multi ? renderJson(scanned[0]!.result, VERSION) : multiJson(scanned));
     }
-    return finish(failed ? 1 : 0);
+    return finish(exitCode);
   }
 
   if (prCheck) {
@@ -370,7 +426,7 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
       return finish(2);
     }
   }
-  return finish(failed ? 1 : 0);
+  return finish(exitCode);
 }
 
 /**
@@ -463,12 +519,22 @@ function init(path: string | undefined, ctx: Ctx): number {
   const { deps, values } = ctx;
   const dir = resolve(deps.cwd, path ?? ".");
   const pr = Boolean(values.pr);
-  const { created, skipped } = initProject(dir, Boolean(values.force), { pr });
+  const schedule = Boolean(values.schedule);
+  const { created, skipped } = initProject(dir, Boolean(values.force), { pr, schedule });
   deps.out("");
   for (const f of created) deps.out(`  ${pc.green("✔")} Created ${f}`);
   for (const f of skipped) deps.out(`  ${pc.dim("•")} ${f} already exists, left as it is ${pc.dim("(--force to replace)")}`);
   deps.out("");
   deps.out(`  ${pc.bold("Next")}`);
+  if (schedule) {
+    deps.out(`    1. Add repository secrets (Settings → Secrets and variables → Actions): SEAWORTHY_LICENCE,`);
+    deps.out(`       and SEAWORTHY_SLACK_WEBHOOK, SEAWORTHY_WEBHOOK_URL or SEAWORTHY_SMTP_URL + SEAWORTHY_EMAIL_TO.`);
+    deps.out(`    2. Commit the files. The scan runs every Monday; press "Run workflow" to try it now.`);
+    deps.out(`    3. You're alerted when new problems appear, including new advisories for your dependencies.`);
+    deps.out(pc.dim(`       GitHub pauses scheduled workflows after 60 days with no commits; re-enable it in the Actions tab.`));
+    deps.out("");
+    return 0;
+  }
   if (pr) {
     deps.out(`    1. Add your licence key as a repository secret called SEAWORTHY_LICENCE`);
     deps.out(`       (Settings → Secrets and variables → Actions). Without it, pull requests get a full scan.`);

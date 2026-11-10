@@ -18,8 +18,8 @@ jobs:
   seaworthy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Scan
@@ -67,8 +67,8 @@ jobs:
       contents: read
       security-events: write # to show findings in the Security tab
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Scan
@@ -94,10 +94,10 @@ jobs:
       contents: read
       pull-requests: write # to post and update the comment
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # the base branch is needed to compare with
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Scan what this pull request changes
@@ -113,7 +113,7 @@ jobs:
       - name: Comment on the pull request
         if: always() && hashFiles('seaworthy-pr.md') != ''
         continue-on-error: true # pull requests from forks get a read-only token
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const body = require("fs").readFileSync("seaworthy-pr.md", "utf8");
@@ -125,6 +125,69 @@ jobs:
             if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
             else await github.rest.issues.createComment({ owner, repo, issue_number, body });
       - name: Fail on new findings at or above the threshold
+        if: always() && steps.scan.outcome == 'failure'
+        run: exit 1
+`;
+
+/**
+ * The workflow `seaworthy init --schedule` writes (Pro): a weekly scan that alerts when
+ * something new appears. Scan history is carried between runs in the Actions cache, so
+ * "new" means new since last week, including fresh vulnerability advisories for code that
+ * hasn't changed.
+ */
+export const SCHEDULE_WORKFLOW = `# Seaworthy: weekly security scan with alerts (Seaworthy Pro). https://dynamomaritime.com/seaworthy
+# Add these repository secrets (Settings, then Secrets and variables, then Actions):
+#   SEAWORTHY_LICENCE        your Pro or Agency key
+#   and at least one of:
+#   SEAWORTHY_SLACK_WEBHOOK  a Slack incoming-webhook URL
+#   SEAWORTHY_WEBHOOK_URL    any https URL that accepts a JSON POST
+#   SEAWORTHY_SMTP_URL       smtps://user:password@smtp.example.com:465, plus SEAWORTHY_EMAIL_TO
+# Alerts list rule, file and line only: never code or secrets.
+name: Seaworthy weekly scan
+
+on:
+  schedule:
+    - cron: "17 7 * * 1" # Mondays at 07:17 UTC
+  workflow_dispatch: # and whenever you press "Run workflow"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Restore scan history
+        uses: actions/cache/restore@v6
+        with:
+          path: .seaworthy
+          key: seaworthy-history-\${{ github.run_id }}
+          restore-keys: seaworthy-history-
+      - name: Scan and alert
+        id: scan
+        continue-on-error: true
+        run: npx --yes seaworthy-cli@0 --notify --format markdown --output seaworthy-report.md
+        env:
+          SEAWORTHY_LICENCE: \${{ secrets.SEAWORTHY_LICENCE }}
+          SEAWORTHY_SLACK_WEBHOOK: \${{ secrets.SEAWORTHY_SLACK_WEBHOOK }}
+          SEAWORTHY_WEBHOOK_URL: \${{ secrets.SEAWORTHY_WEBHOOK_URL }}
+          SEAWORTHY_SMTP_URL: \${{ secrets.SEAWORTHY_SMTP_URL }}
+          SEAWORTHY_EMAIL_TO: \${{ secrets.SEAWORTHY_EMAIL_TO }}
+          SEAWORTHY_EMAIL_FROM: \${{ secrets.SEAWORTHY_EMAIL_FROM }}
+      - name: Add the report to this run
+        if: always() && hashFiles('seaworthy-report.md') != ''
+        run: cat seaworthy-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Save scan history
+        if: always() && hashFiles('.seaworthy/history.json') != ''
+        uses: actions/cache/save@v6
+        with:
+          path: .seaworthy
+          key: seaworthy-history-\${{ github.run_id }}
+      - name: Fail on findings or a failed alert
         if: always() && steps.scan.outcome == 'failure'
         run: exit 1
 `;
@@ -141,10 +204,12 @@ export const CONFIG = `${JSON.stringify(
 )}\n`;
 
 /** Writes the config and workflow, never overwriting what's there unless forced. Returns lines to print. */
-export function initProject(dir: string, force: boolean, opts: { pr?: boolean } = {}): { created: string[]; skipped: string[] } {
+export function initProject(dir: string, force: boolean, opts: { pr?: boolean; schedule?: boolean } = {}): { created: string[]; skipped: string[] } {
   const files: Array<[string, string]> = [
     [join(dir, "seaworthy.config.json"), CONFIG],
-    [join(dir, ".github", "workflows", "seaworthy.yml"), opts.pr ? PR_WORKFLOW : WORKFLOW],
+    opts.schedule
+      ? [join(dir, ".github", "workflows", "seaworthy-scheduled.yml"), SCHEDULE_WORKFLOW]
+      : [join(dir, ".github", "workflows", "seaworthy.yml"), opts.pr ? PR_WORKFLOW : WORKFLOW],
   ];
   const created: string[] = [];
   const skipped: string[] = [];

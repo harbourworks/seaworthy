@@ -22,7 +22,7 @@ Node 20 or later. No install needed; `npm i -D seaworthy-cli` pins a version if 
 | `seaworthy [scan] [path]` | Scan a project (default: the current folder) |
 | `seaworthy explain <rule-id>` | Explain one rule, with an example of the problem and the fix |
 | `seaworthy rules` | List every rule |
-| `seaworthy init [path]` | Add `seaworthy.config.json` and a GitHub Actions workflow; `--pr` for pull-request comments (Pro) |
+| `seaworthy init [path]` | Add `seaworthy.config.json` and a GitHub Actions workflow; `--pr` for pull-request comments, `--schedule` for a weekly scan with alerts (both Pro), `--agent` for an AI assistant's rules file |
 | `seaworthy mcp` | Run as an MCP server over stdio, for AI coding assistants (see below) |
 | `seaworthy buy` | See the plans and open the checkout |
 | `seaworthy login <key>` / `logout` / `status` | Manage a Pro or Agency licence on this machine |
@@ -40,6 +40,8 @@ Node 20 or later. No install needed; `npm i -D seaworthy-cli` pins a version if 
 | `--offline` | Make no network calls at all (skips the dependency check) |
 | `--baseline <ref>` | Report only findings that are new since a git ref, such as `origin/main` (Pro) |
 | `--all` | Scan every project in a folder, one combined report (Agency) |
+| `--notify` | Send an alert to Slack, a webhook or email (Pro; see below) |
+| `--notify-on new\|failing\|always` | When to alert. Default `new`: only when problems at or above `--fail-on` appear that weren't in the last scan |
 
 ## Exit codes
 
@@ -47,7 +49,7 @@ Node 20 or later. No install needed; `npm i -D seaworthy-cli` pins a version if 
 | --- | --- |
 | `0` | No findings at or above the `--fail-on` threshold |
 | `1` | At least one finding at or above the threshold (with `--baseline`: at least one new one) |
-| `2` | Seaworthy itself hit an error (bad option, unreadable config, not a folder) |
+| `2` | Seaworthy itself hit an error (bad option, unreadable config, not a folder), or an alert couldn't be delivered |
 
 ## JSON output
 
@@ -93,6 +95,22 @@ Node 20 or later. No install needed; `npm i -D seaworthy-cli` pins a version if 
 | `baseline` | Only with `--baseline`: `{ ref, sha, new, fixed, alreadyThere }` |
 
 Secret values are never included: findings point at the file and line, not the key.
+
+## Scheduled scans and alerts (Pro)
+
+`npx seaworthy-cli init --schedule` writes `.github/workflows/seaworthy-scheduled.yml`, which scans every Monday (and whenever you press "Run workflow") and alerts when new problems appear. Scan history is kept between runs in the Actions cache, so "new" means new since the last run. That includes newly published advisories for dependencies you haven't changed.
+
+Alerts are set up with environment variables (repository secrets in CI). Set at least one destination:
+
+| Variable | Meaning |
+| --- | --- |
+| `SEAWORTHY_SLACK_WEBHOOK` | A Slack incoming-webhook URL |
+| `SEAWORTHY_WEBHOOK_URL` | Any https URL; it receives a JSON POST with the title, counts and findings (rule, title, severity, file, line) |
+| `SEAWORTHY_SMTP_URL` | Your own mail server: `smtps://user:password@smtp.example.com:465`, or `smtp://...:587` (STARTTLS is then required; Seaworthy won't send a password unencrypted). URL-encode special characters in the password. |
+| `SEAWORTHY_EMAIL_TO` | With SMTP: one or more addresses, separated by commas |
+| `SEAWORTHY_EMAIL_FROM` | With SMTP: the sender, if the username isn't an email address |
+
+Alerts never include code, excerpts or secret values. If an alert can't be delivered, the run exits 2, so the failure shows. GitHub pauses scheduled workflows in repositories with no commits for 60 days; re-enable it in the Actions tab.
 
 ## Configuration
 

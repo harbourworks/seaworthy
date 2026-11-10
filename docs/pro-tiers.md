@@ -9,6 +9,7 @@ The tier-to-feature mapping in code lives in one place: `src/core/entitlements.t
 | Terminal, JSON, SARIF and Markdown output, exit codes for CI | ✔ | ✔ | ✔ |
 | Fix text and paste-ready AI prompts | ✔ | ✔ | ✔ |
 | Pull-request checks: only new problems, one updated comment (`--baseline <ref>`, `init --pr`) | | ✔ | ✔ |
+| Scheduled scans with Slack, webhook and email alerts (`--notify`, `init --schedule`) | | ✔ | ✔ |
 | HTML report (`--format html`), Seaworthy-branded | | ✔ | ✔ |
 | Scan history and trends (`seaworthy history`) | | ✔ | ✔ |
 | Before/after comparison (`seaworthy compare`, plus "since last scan" on every scan) | | ✔ | ✔ |

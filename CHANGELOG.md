@@ -2,6 +2,11 @@
 
 All notable changes to seaworthy-cli. Versions follow [semantic versioning](https://semver.org); while it's 0.x, a minor version can change behaviour.
 
+## Unreleased
+
+- **Scheduled scans with alerts (Pro):** `seaworthy scan --notify` alerts Slack, any https webhook, or email through your own SMTP server when new problems appear; `--notify-on failing|always` widens it. `seaworthy init --schedule` writes a weekly workflow that keeps scan history in the Actions cache. Alerts never include code or secrets.
+- Workflows and the Action use the latest action versions (checkout v7, setup-node v7, github-script v9).
+
 ## 0.5.0 (10 November 2026)
 
 - **`seaworthy mcp`:** an MCP server over stdio for AI coding assistants, with `scan_project`, `explain_finding` and `list_rules`. Local and read-only; findings come back without code excerpts.
