@@ -28,7 +28,8 @@ describe("notes-saas fixture", () => {
   const r = scan(join(FIXTURES, "notes-saas"), DEFAULT_CONFIG, RULES);
 
   it("finds exactly the planted secret and Supabase flaws", () => {
-    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01)/.test(s))).toEqual([
+    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01|B01)/.test(s))).toEqual([
+      "SW-B01 next.config.js:2",
       "SW-D01 supabase/migrations/0001_init.sql:20",
       "SW-D02 supabase/migrations/0001_init.sql:18",
       "SW-P01 app/api/webhooks/stripe/route.ts:5",
@@ -65,6 +66,9 @@ describe("chat-agent fixture", () => {
       "SW-S04 lib/openai-browser.ts:4",
       "SW-S04 lib/openai-browser.ts:5",
     ]);
+  });
+  it("reports the missing headers on the next dependency, as there is no next.config", () => {
+    expect(ids(r).filter((s) => s.startsWith("SW-B01"))).toEqual(["SW-B01 package.json:12"]);
   });
   it("finds the open Firestore and Storage rules", () => {
     expect(ids(r).filter((s) => /^SW-D0[34]/.test(s))).toEqual(["SW-D03 firestore.rules:5", "SW-D04 storage.rules:5"]);
@@ -722,5 +726,52 @@ describe("SW-P01 Stripe webhook without signature check", () => {
     const r = scan(p.root, DEFAULT_CONFIG, RULES);
     p.done();
     expect(r.rulesRun).not.toContain("SW-P01");
+  });
+});
+
+describe("SW-B01 missing security headers", () => {
+  const next = (deps: Record<string, string> = {}) => ({
+    "package.json": JSON.stringify({ dependencies: { next: "14.2.3", react: "18.2.0", ...deps } }, null, 2),
+  });
+  const run = (files: Record<string, string>) => {
+    const p = project(files);
+    const all = scan(p.root, DEFAULT_CONFIG, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-B01");
+    return { all: mine.map((f) => `${f.file}:${f.line}`), titles: mine.map((f) => f.title) };
+  };
+  const fullHeaders =
+    "module.exports = {\n  async headers() {\n    return [{ source: '/(.*)', headers: [\n" +
+    "      { key: 'Content-Security-Policy', value: \"default-src 'self'; frame-ancestors 'none'\" },\n" +
+    "      { key: 'Strict-Transport-Security', value: 'max-age=63072000' },\n    ] }];\n  },\n};\n";
+
+  it("vulnerable: a next.config without headers", () => {
+    expect(run({ ...next(), "next.config.mjs": "const nextConfig = {\n  reactStrictMode: true,\n};\nexport default nextConfig;\n" }).all).toEqual([
+      "next.config.mjs:1",
+    ]);
+  });
+  it("fixed: all three set (frame-ancestors counts as frame protection)", () => {
+    expect(run({ ...next(), "next.config.js": fullHeaders }).all).toEqual([]);
+  });
+  it("names only what is missing", () => {
+    expect(
+      run({ ...next(), "next.config.js": "module.exports = { async headers() { return [{ source: '/(.*)', headers: [{ key: 'X-Frame-Options', value: 'DENY' }] }]; } };\n" }).titles,
+    ).toEqual(["Security headers missing: Content-Security-Policy, Strict-Transport-Security"]);
+  });
+  it("counts headers set in middleware or host config", () => {
+    expect(
+      run({
+        ...next(),
+        "next.config.js": "module.exports = {};\n",
+        "middleware.ts": "res.headers.set('Content-Security-Policy', csp);\nres.headers.set('X-Frame-Options', 'DENY');\n",
+        "vercel.json": JSON.stringify({ headers: [{ source: "/(.*)", headers: [{ key: "Strict-Transport-Security", value: "max-age=1" }] }] }),
+      }).all,
+    ).toEqual([]);
+  });
+  it("trusts header packages", () => {
+    expect(run({ ...next({ "@next-safe/middleware": "0.10.0" }), "next.config.js": "module.exports = {};\n" }).all).toEqual([]);
+  });
+  it("with no next.config, points at the next dependency", () => {
+    expect(run(next()).all).toEqual(["package.json:3"]);
   });
 });
