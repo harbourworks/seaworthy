@@ -17,15 +17,15 @@ describe("entitlements", () => {
   it("matches the tier table exactly", () => {
     const features = (t: (typeof TIERS)[number]) => [...TIER_INFO[t].features].sort();
     expect(features("free")).toEqual([]);
-    expect(features("pro")).toEqual(["compare", "history", "html-report", "pr-checks"]);
-    expect(features("agency")).toEqual(["compare", "history", "html-report", "pr-checks", "scan-all", "white-label"]);
+    expect(features("pro")).toEqual(["alerts", "compare", "history", "html-report", "pr-checks"]);
+    expect(features("agency")).toEqual(["alerts", "compare", "history", "html-report", "pr-checks", "scan-all", "white-label"]);
     expect([TIER_INFO.pro.pricePerYearGbp, TIER_INFO.agency.pricePerYearGbp]).toEqual([99, 349]);
     expect(TIER_INFO.pro.pricePerMonthGbp).toBe(12);
     expect(TIER_INFO.agency.pricePerMonthGbp).toBeUndefined();
     expect([TIER_INFO.pro.machines, TIER_INFO.agency.machines]).toEqual([2, 10]);
   });
   it("names the cheapest tier for each feature", () => {
-    const want: Record<Feature, string> = { "html-report": "pro", history: "pro", compare: "pro", "pr-checks": "pro", "white-label": "agency", "scan-all": "agency" };
+    const want: Record<Feature, string> = { "html-report": "pro", history: "pro", compare: "pro", "pr-checks": "pro", alerts: "pro", "white-label": "agency", "scan-all": "agency" };
     for (const [f, t] of Object.entries(want)) expect(requiredTier(f as Feature)).toBe(t);
     expect(hasFeature("free", "html-report")).toBe(false);
   });
