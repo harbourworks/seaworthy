@@ -15,7 +15,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 | [SW-D01](#sw-d01) | Table without row-level security | critical | Supabase |
 | [SW-D02](#sw-d02) | Row-level security policy that allows everyone | high | Supabase |
 | [SW-D03](#sw-d03) | Firebase database rules open to everyone | critical | Firebase |
-| [SW-D04](#sw-d04) | Storage open to everyone | high | Firebase |
+| [SW-D04](#sw-d04) | Storage open to everyone | high | Firebase, Supabase |
 | [SW-P01](#sw-p01) | Stripe webhook does not verify the signature | critical | Stripe |
 | [SW-P02](#sw-p02) | Price or amount taken from the client | high | Stripe |
 | [SW-A01](#sw-a01) | API route with no auth check | high | Next.js |
@@ -28,6 +28,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 | [SW-L03](#sw-l03) | Agent tool with shell, file or code access and no guard | high | Any project |
 | [SW-L04](#sw-l04) | MCP server config with secrets in plain text or no authentication | high | MCP |
 | [SW-X01](#sw-x01) | Dependency with known vulnerabilities | high | Any project |
+| [SW-X02](#sw-x02) | Dependency that isn't on npm, or is brand new | high | Any project |
 | [SW-B01](#sw-b01) | Missing security headers | low | Next.js |
 
 ## SW-S01
@@ -36,7 +37,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 
 API keys, tokens and passwords written into files that get committed. Anyone with access to the repo, its forks or its history can use them, and bots scrape public repos for keys within minutes of a push. Deleting the line is not enough: the key stays in git history, so it has to be rotated.
 
-**Checks:** Files as they are now, using each provider's published key format (Stripe, GitHub, OpenAI, Anthropic, Supabase, AWS, Slack, SendGrid, npm, Hugging Face, Google, private keys and database URLs). Supabase service-role JWTs are flagged; anon keys aren't. Git-ignored files are skipped, because they aren't committed. Doesn't read git history yet.
+**Checks:** Files as they are now, using each provider's published key format (Stripe, GitHub, OpenAI, Anthropic, Supabase, AWS, Slack, SendGrid, npm, Hugging Face, Google, private keys and database URLs). Supabase service-role JWTs are flagged; anon keys aren't. Git-ignored files are skipped, because they aren't committed. When you scan a repository's top folder, earlier versions of files in git history are checked too (newest first, up to 20,000 file versions), and a secret found only there is reported with the commit that added it.
 
 ## SW-S02
 
@@ -88,11 +89,11 @@ Firebase apps talk to Firestore and the Realtime Database straight from the brow
 
 ## SW-D04
 
-**Storage open to everyone** · high · runs on: Firebase
+**Storage open to everyone** · high · runs on: Firebase, Supabase
 
-Storage rules decide who can upload, download and delete files. With no condition, `if true` or test-mode rules, anyone can download every file (ID scans, invoices, private photos), overwrite them, or fill your bucket and your bill. Rules should tie files to the user who owns them.
+Storage rules decide who can upload, download and delete files. With no condition, `if true` or test-mode rules, anyone can download every file (ID scans, invoices, private photos), overwrite them, or fill your bucket and your bill. Rules should tie files to the user who owns them. In Supabase, a bucket marked public serves every file to anyone with its URL, with no login at all: right for avatars, wrong for invoices or documents.
 
-**Checks:** Firebase Cloud Storage rules only. Supabase public storage buckets are not checked yet.
+**Checks:** Firebase Cloud Storage rules, and Supabase buckets made public in SQL (migrations and seed.sql), supabase/config.toml or createBucket/updateBucket calls. A public bucket whose name suggests private files (invoices, documents, ID scans) is high; one with a neutral name is medium, at medium confidence; buckets for images and avatars aren't flagged.
 
 ## SW-P01
 
@@ -190,6 +191,14 @@ Checks your direct dependencies, at the exact versions in your lockfile, against
 
 **Checks:** Direct dependencies, at the versions in your lockfile, checked against OSV (osv.dev). Sends only package names and versions; needs a connection and is skipped with `--offline`.
 
+## SW-X02
+
+**Dependency that isn't on npm, or is brand new** · high · runs on: Any project
+
+AI coding tools sometimes invent package names that sound right but don't exist. Attackers watch for those names and register them ("slopsquatting"), so the next install runs their code on your machine and in CI. Seaworthy checks each dependency name against the public npm registry, sending only the names, as npm itself would. Packages first published in the last few weeks are flagged at medium confidence, because a new package is sometimes fine and sometimes a fresh squat. Use --offline to skip it.
+
+**Checks:** Every dependency and devDependency name in package.json, checked on the public npm registry (names only, as npm install would). Not on npm: high. First published in the last 30 days: medium, at medium confidence. Private-registry packages (.npmrc) and the project's own workspace packages are skipped; needs a connection and is skipped with `--offline`.
+
 ## SW-B01
 
 **Missing security headers** · low · runs on: Next.js
@@ -197,11 +206,5 @@ Checks your direct dependencies, at the exact versions in your lockfile, against
 A few response headers make whole classes of attack harder: Content-Security-Policy limits which scripts can run (a second line of defence against XSS), X-Frame-Options or frame-ancestors stops other sites framing yours to trick clicks, and Strict-Transport-Security keeps browsers on HTTPS. They are not a fix for a real bug, which is why this is low severity, but they are cheap to add. Some hosts add HSTS for you; `curl -I https://your-site` shows what is sent.
 
 **Checks:** Next.js projects only. Looks for Content-Security-Policy, frame protection and HSTS in next.config, middleware, host config (vercel.json, netlify.toml, _headers, firebase.json) and nginx, Caddy, Apache or Traefik config.
-
-## Not checked yet
-
-- Made-up or brand-new dependencies
-- Supabase public storage buckets
-- Secrets in git history
 
 *Seaworthy catches common, serious mistakes. It is not a security audit or a guarantee.*

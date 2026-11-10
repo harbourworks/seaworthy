@@ -11,6 +11,7 @@ import { p01WebhookUnverified } from "./payments/p01-webhook-unverified.js";
 import { p02ClientPrice } from "./payments/p02-client-price.js";
 import { b01SecurityHeaders } from "./browser/b01-security-headers.js";
 import { x01VulnerableDeps } from "./deps/x01-vulnerable-deps.js";
+import { x02UnknownPackage } from "./deps/x02-unknown-package.js";
 import { a01NoAuthCheck } from "./auth/a01-no-auth-check.js";
 import { a02NoOwnershipCheck } from "./auth/a02-no-ownership-check.js";
 import { a03NoRateLimit } from "./auth/a03-no-rate-limit.js";
@@ -21,7 +22,7 @@ import { l02ModelOutputSink } from "./llm/l02-model-output-sink.js";
 import { l03DangerousAgentTool } from "./llm/l03-dangerous-agent-tool.js";
 import { l04McpConfig } from "./llm/l04-mcp-config.js";
 
-export const RULES: Rule[] = [s01CommittedSecrets, s02EnvCommitted, s03SecretInBrowser, s04LlmKeyInClient, d01RlsMissing, d02PolicyAllowsAll, d03FirebaseOpen, d04StorageOpen, p01WebhookUnverified, p02ClientPrice, a01NoAuthCheck, a02NoOwnershipCheck, a03NoRateLimit, a04WildcardCors, a05SqlInjection, l01PromptInjection, l02ModelOutputSink, l03DangerousAgentTool, l04McpConfig, x01VulnerableDeps, b01SecurityHeaders];
+export const RULES: Rule[] = [s01CommittedSecrets, s02EnvCommitted, s03SecretInBrowser, s04LlmKeyInClient, d01RlsMissing, d02PolicyAllowsAll, d03FirebaseOpen, d04StorageOpen, p01WebhookUnverified, p02ClientPrice, a01NoAuthCheck, a02NoOwnershipCheck, a03NoRateLimit, a04WildcardCors, a05SqlInjection, l01PromptInjection, l02ModelOutputSink, l03DangerousAgentTool, l04McpConfig, x01VulnerableDeps, x02UnknownPackage, b01SecurityHeaders];
 
 export function findRule(id: string): Rule | undefined {
   const want = id.trim().toUpperCase();

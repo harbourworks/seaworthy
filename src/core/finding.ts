@@ -22,6 +22,11 @@ export interface Finding {
   fix: string;
   /** A paste-ready prompt for an AI coding tool, when one helps. */
   fixPrompt?: string;
+  /**
+   * Set when the finding is in git history rather than the current files: the short hash of
+   * the commit that added it. file and line then refer to that commit's version of the file.
+   */
+  commit?: string;
 }
 
 export const severityRank = (s: Severity): number => SEVERITIES.length - SEVERITIES.indexOf(s);

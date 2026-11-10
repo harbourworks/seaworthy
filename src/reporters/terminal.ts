@@ -43,10 +43,11 @@ export function renderTerminal(result: ScanResult, project: ProjectFiles, versio
 }
 
 export function renderFinding(f: Finding, project: ProjectFiles): string[] {
-  const lines = project.lines(f.file);
+  // A finding in git history has no excerpt: today's file, if it exists, holds different lines.
+  const lines = f.commit ? [] : project.lines(f.file);
   const out = [
     `  ${BADGE[f.severity](` ${f.severity.toUpperCase()} `)}  ${pc.bold(f.title)}  ${pc.dim(f.ruleId)}`,
-    `  ${pc.cyan(`${f.file}:${f.line}:${f.column}`)}`,
+    `  ${pc.cyan(`${f.file}:${f.line}:${f.column}`)}${f.commit ? pc.dim(`  in commit ${f.commit}`) : ""}`,
   ];
   const width = String(f.line + 1).length;
   for (let n = Math.max(1, f.line - 1); n <= Math.min(lines.length, f.line + 1); n++) {

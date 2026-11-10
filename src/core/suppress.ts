@@ -31,6 +31,11 @@ export function applySuppressions(findings: Finding[], project: ProjectFiles): S
   const missing = new Map<string, SuppressionProblem>();
 
   for (const f of findings) {
+    // A finding in an old commit can't carry a comment, and today's file may say anything.
+    if (f.commit) {
+      kept.push(f);
+      continue;
+    }
     const lines = project.lines(f.file);
     let hit: "ok" | "no-reason" | null = null;
     for (const ln of [f.line, f.line - 1]) {

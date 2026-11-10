@@ -47,7 +47,7 @@ describe("MCP server", () => {
     }
     const scanTool = tools.find((t) => t.name === "scan_project")!;
     expect(scanTool.description).toMatch(/never uploaded/);
-    expect(scanTool.description).toMatch(/osv\.dev unless offline/);
+    expect(scanTool.description).toMatch(/osv\.dev, and package names to the npm registry, unless offline is true/);
   });
 
   it("scan_project finds the planted problems, with file, line, why and fix", async () => {

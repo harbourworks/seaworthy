@@ -5,7 +5,7 @@ import { z } from "zod";
 import { ConfigError, loadConfig, mergeConfig } from "../core/config.js";
 import { atLeastSeverity, CONFIDENCES, SEVERITIES } from "../core/finding.js";
 import { scan } from "../core/scan.js";
-import { dependencyLookup } from "../deps/lookup.js";
+import { onlineLookups } from "../deps/lookup.js";
 import { catalogue, COVERAGE } from "../docs/catalogue.js";
 import { findRule, RULES } from "../rules/index.js";
 
@@ -37,7 +37,7 @@ export function createMcpServer(deps: McpDeps): McpServer {
         "open Firebase rules, API routes with no auth or ownership check, unverified Stripe webhooks and client-set prices, SQL injection, " +
         "prompt injection, unsafe agent tools, MCP configs with secrets, vulnerable dependencies and missing security headers. " +
         "Each finding has a file, line, explanation and fix. Use it before a deploy, after adding auth, payments or AI features, or before making a repo public. " +
-        "Code is read locally and never uploaded. The dependency check sends package names and versions to osv.dev unless offline is true.",
+        "Code is read locally and never uploaded. The dependency checks send package names and versions to osv.dev, and package names to the npm registry, unless offline is true.",
       inputSchema: {
         path: z.string().optional().describe("Project folder to scan, absolute or relative to the server's working directory. Default: the working directory."),
         severity: z.enum(SEVERITIES).optional().describe("Only return findings at or above this severity. Default: all severities."),
@@ -59,8 +59,8 @@ export function createMcpServer(deps: McpDeps): McpServer {
         if (err instanceof ConfigError) return fail(err.message);
         throw err;
       }
-      const osv = await dependencyLookup(dir, config, deps.fetch ?? fetch);
-      const result = scan(dir, config, RULES, { osv });
+      const { osv, npm } = await onlineLookups(dir, config, deps.fetch ?? fetch);
+      const result = scan(dir, config, RULES, { osv, npm });
       const findings = result.findings
         .filter((f) => !severity || atLeastSeverity(f.severity, severity))
         .map((f) => ({
@@ -79,6 +79,7 @@ export function createMcpServer(deps: McpDeps): McpServer {
       if (osv?.status === "ok") notes.push(`Checked ${osv.checked} dependencies against osv.dev (package names and versions only).`);
       if (osv?.status === "offline") notes.push("Dependency check skipped (offline).");
       if (osv?.status === "failed") notes.push(`Dependency check skipped: ${osv.reason}.`);
+      if (npm?.status === "ok" && npm.checked) notes.push(`Checked ${npm.checked} package names on the npm registry.`);
       if (result.hiddenLowConfidence) notes.push(`${result.hiddenLowConfidence} lower-confidence finding(s) hidden; pass minConfidence "medium" to see them.`);
       for (const e of result.ruleErrors) notes.push(`Rule ${e.ruleId} crashed and was skipped: ${e.message}`);
       const out = {

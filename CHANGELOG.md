@@ -2,7 +2,13 @@
 
 All notable changes to seaworthy-cli. Versions follow [semantic versioning](https://semver.org); while it's 0.x, a minor version can change behaviour.
 
-## Unreleased
+## 0.6.0 (10 November 2026)
+
+Every check in the v1 plan is now built.
+
+- **SW-X02:** dependencies that don't exist on the npm registry (names AI tools invent, which anyone can register) or were first published in the last 30 days. Only names are sent, as `npm install` would; `--offline` skips it.
+- **SW-D04, Supabase half:** public storage buckets that look like they hold private files, from migrations, `seed.sql`, `supabase/config.toml` or `createBucket` calls.
+- **SW-S01 in git history:** when you scan a repository's top folder, secrets in earlier versions of files are reported with the commit that added them. In pull-request checks, only leaks added by the pull request count as new.
 
 - **Scheduled scans with alerts (Pro):** `seaworthy scan --notify` alerts Slack, any https webhook, or email through your own SMTP server when new problems appear; `--notify-on failing|always` widens it. `seaworthy init --schedule` writes a weekly workflow that keeps scan history in the Actions cache. Alerts never include code or secrets.
 - Workflows and the Action use the latest action versions (checkout v7, setup-node v7, github-script v9).

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { ProjectFiles } from "../src/core/project.js";
 import { walk } from "../src/core/walk.js";
 import { scan } from "../src/core/scan.js";
@@ -9,6 +9,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { RULES } from "../src/rules/index.js";
 import { directDependencies } from "../src/deps/dependencies.js";
 import { compareSemver, lookupAdvisories } from "../src/deps/osv.js";
+import { declaredDependencies, lookupPackages } from "../src/deps/registry.js";
 
 function project(files: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), "seaworthy-deps-"));
@@ -131,5 +132,95 @@ describe("SW-X01 dependency with known vulnerabilities", () => {
     const none = scan(p.root, DEFAULT_CONFIG, RULES);
     p.done();
     expect([...offline.findings, ...none.findings].filter((x) => x.ruleId === "SW-X01")).toEqual([]);
+  });
+});
+
+
+/** A fake npm registry. `missing` names 404; `created` gives a first-publish date (else old). Records every request. */
+function fakeRegistry(opts: { missing?: string[]; created?: Record<string, string> } = {}) {
+  const urls: string[] = [];
+  const f = (async (url: string, init?: RequestInit) => {
+    urls.push(url);
+    const name = decodeURIComponent(url.replace("https://registry.npmjs.org/", ""));
+    if (opts.missing?.includes(name)) return new Response('{"error":"Not found"}', { status: 404 });
+    const created = opts.created?.[name];
+    const abbreviated = (init?.headers as Record<string, string> | undefined)?.accept?.includes("install-v1");
+    if (abbreviated) {
+      return new Response(JSON.stringify({ name, versions: { "1.0.0": {} }, modified: created ?? "2019-05-01T00:00:00Z" }));
+    }
+    return new Response(JSON.stringify({ name, time: { created: created ?? "2019-05-01T00:00:00Z" } }));
+  }) as unknown as typeof fetch;
+  return { f, urls };
+}
+
+describe("SW-X02 dependency that isn't on npm, or is brand new", () => {
+  it("matches the chat-agent answer key: the two invented packages, at their lines", async () => {
+    const dir = resolve(__dirname, "../fixtures/apps/chat-agent");
+    const files = new ProjectFiles(dir, walk(dir).files);
+    const { f } = fakeRegistry({ missing: ["openai-stream-guard-utils", "react-markdown-safe-html"] });
+    const npm = await lookupPackages(declaredDependencies(files).map((d) => d.name), f);
+    const r = scan(dir, DEFAULT_CONFIG, RULES, { npm });
+    expect(r.findings.filter((x) => x.ruleId === "SW-X02").map((x) => `${x.file}:${x.line} ${x.severity} ${x.title}`).sort()).toEqual([
+      "package.json:14 high openai-stream-guard-utils isn't on npm",
+      "package.json:17 high react-markdown-safe-html isn't on npm",
+    ]);
+  });
+
+  it("flags a brand-new package at medium confidence (hidden by default), and not an old one", async () => {
+    const recent = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    const p = project({ "package.json": pkg({ "fresh-thing": "1.0.0", lodash: "4.17.21" }) });
+    const { f } = fakeRegistry({ created: { "fresh-thing": recent } });
+    const npm = await lookupPackages(declaredDependencies(p.files).map((d) => d.name), f);
+    const hidden = scan(p.root, DEFAULT_CONFIG, RULES, { npm });
+    const shown = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "medium" }, RULES, { npm });
+    p.done();
+    expect(hidden.findings.filter((x) => x.ruleId === "SW-X02")).toEqual([]);
+    expect(shown.findings.filter((x) => x.ruleId === "SW-X02").map((x) => `${x.severity} ${x.title}`)).toEqual([
+      "medium fresh-thing was first published 3 days ago",
+    ]);
+  });
+
+  it("checks devDependencies and npm: aliases, sends only names, and skips local, workspace and private-registry packages", async () => {
+    const p = project({
+      "package.json": JSON.stringify({
+        name: "root",
+        dependencies: {
+          "@acme/internal": "1.0.0", // private scope, set in .npmrc
+          shared: "*", // the project's own workspace package
+          local: "file:../local",
+          gitdep: "github:user/repo",
+          pretty: "npm:prettier@3.0.0",
+        },
+        devDependencies: { "made-up-test-helper": "1.0.0" },
+      }),
+      "packages/shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+      ".npmrc": "@acme:registry=https://npm.acme.example/\n",
+    });
+    const names = declaredDependencies(p.files).map((d) => d.name).sort();
+    expect(names).toEqual(["made-up-test-helper", "prettier"]);
+    const { f, urls } = fakeRegistry({ missing: ["made-up-test-helper"] });
+    const npm = await lookupPackages(names, f);
+    const r = scan(p.root, DEFAULT_CONFIG, RULES, { npm });
+    p.done();
+    expect(urls.every((u) => u.startsWith("https://registry.npmjs.org/"))).toBe(true);
+    expect(r.findings.filter((x) => x.ruleId === "SW-X02").map((x) => x.title)).toEqual(["made-up-test-helper isn't on npm"]);
+  });
+
+  it("a project that uses a private registry for everything is never looked up", () => {
+    const p = project({ "package.json": pkg({ anything: "1.0.0" }), ".npmrc": "registry=https://npm.corp.example/\n" });
+    expect(declaredDependencies(p.files)).toEqual([]);
+    p.done();
+  });
+
+  it("reports nothing offline, when the registry is down, or in library use", async () => {
+    const p = project({ "package.json": pkg({ ghost: "1.0.0" }) });
+    const down = (async () => {
+      throw new Error("ENOTFOUND");
+    }) as unknown as typeof fetch;
+    const failed = await lookupPackages(["ghost", "vitest"], down);
+    expect(failed.status).toBe("failed");
+    const runs = [scan(p.root, DEFAULT_CONFIG, RULES, { npm: { status: "offline" } }), scan(p.root, DEFAULT_CONFIG, RULES, { npm: failed }), scan(p.root, DEFAULT_CONFIG, RULES)];
+    p.done();
+    for (const r of runs) expect(r.findings.filter((x) => x.ruleId === "SW-X02")).toEqual([]);
   });
 });

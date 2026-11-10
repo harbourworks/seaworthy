@@ -83,7 +83,7 @@ export function findingSections(findings: Finding[], project: ProjectFiles, opts
 }
 
 export function fullFinding(f: Finding, project: ProjectFiles, opts: MarkdownOptions): string[] {
-  const lines = project.lines(f.file);
+  const lines = f.commit ? [] : project.lines(f.file);
   const width = String(f.line + 1).length;
   const excerpt: string[] = [];
   for (let n = Math.max(1, f.line - 1); n <= Math.min(lines.length, f.line + 1); n++) {
@@ -100,12 +100,13 @@ export function fullFinding(f: Finding, project: ProjectFiles, opts: MarkdownOpt
 }
 
 /** "🔴 Critical · Table without row-level security · `file:20` · `SW-D01`". */
-export function briefFinding(f: { severity: Severity; title: string; ruleId: string; file: string; line: number }, opts: MarkdownOptions): string {
+export function briefFinding(f: { severity: Severity; title: string; ruleId: string; file: string; line: number; commit?: string }, opts: MarkdownOptions): string {
   return `${SEVERITY_ICON[f.severity]} ${cap(f.severity)} · ${text(f.title)} · ${location(f, opts)} · ${code(f.ruleId)}`;
 }
 
-function location(f: { file: string; line: number }, opts: MarkdownOptions): string {
+function location(f: { file: string; line: number; commit?: string }, opts: MarkdownOptions): string {
   const label = code(`${f.file}:${f.line}`);
+  if (f.commit) return `${label} in commit ${code(f.commit)}`; // no link: the line is in an old version
   const url = opts.link?.(f.file, f.line);
   return url ? `[${label}](${url})` : label;
 }

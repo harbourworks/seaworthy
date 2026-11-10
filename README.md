@@ -13,7 +13,7 @@ npx seaworthy-cli
 No account, no install, no upload. Node 20 or later.
 
 ```
-  Seaworthy 0.5.0  ·  notes-app  ·  Next.js, React, Supabase, Stripe
+  Seaworthy 0.6.0  ·  notes-app  ·  Next.js, React, Supabase, Stripe
   42 files, 18 rules, 180 ms. Your code never left this machine.
 
   ✖ Not seaworthy: 3 critical, 2 high
@@ -31,12 +31,12 @@ No account, no install, no upload. Node 20 or later.
 
 | Area | Checks |
 | --- | --- |
-| **Secrets** | Keys committed to the repo (with Supabase anon vs service-role told apart) · `.env` files committed or not git-ignored · secrets given a public prefix (`NEXT_PUBLIC_`, `VITE_` …) · LLM keys in browser code |
-| **Database and storage** | Supabase tables without row-level security · policies that let everyone in · open Firestore, Realtime Database and Storage rules, including forgotten test mode |
+| **Secrets** | Keys committed to the repo, now or in its git history (with Supabase anon vs service-role told apart) · `.env` files committed or not git-ignored · secrets given a public prefix (`NEXT_PUBLIC_`, `VITE_` …) · LLM keys in browser code |
+| **Database and storage** | Supabase tables without row-level security · policies that let everyone in · public Supabase buckets holding private files · open Firestore, Realtime Database and Storage rules, including forgotten test mode |
 | **API routes** | No auth check · records fetched by ID without an ownership check · no rate limit on costly endpoints · CORS that lets any site make credentialed requests · SQL built from user input |
 | **Payments** | Stripe webhooks that don't verify the signature · prices or amounts taken from the client |
 | **AI and agents** | User input in the system prompt · model output rendered as HTML or run as code · agent tools with shell or file access and no guard · MCP configs with plain-text secrets or open servers |
-| **Dependencies** | Known vulnerabilities, from [OSV](https://osv.dev) |
+| **Dependencies** | Known vulnerabilities, from [OSV](https://osv.dev) · packages that don't exist on npm (often invented by AI tools) or are brand new |
 | **Headers** | Missing Content-Security-Policy, frame protection and HSTS |
 
 The code checks read JavaScript and TypeScript, including JSX, Vue, Svelte and Astro. Stack-specific checks run only when that stack is detected (Next.js, Supabase, Firebase, Stripe, MCP). They read what your code does, not just words in it, and are tuned for few false alarms. **[Every rule, and where each one stops](docs/rules.md)**; `seaworthy explain SW-D01` explains one.

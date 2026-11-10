@@ -120,7 +120,7 @@ ${c.added.length ? `<details open><summary>New</summary>${list(c.added)}</detail
 }
 
 function findingCard(f: Finding, project: ProjectFiles): string {
-  const lines = project.lines(f.file);
+  const lines = f.commit ? [] : project.lines(f.file);
   const from = Math.max(1, f.line - 2);
   const to = Math.min(lines.length, f.line + 2);
   const code: string[] = [];
@@ -130,8 +130,8 @@ function findingCard(f: Finding, project: ProjectFiles): string {
   }
   return `<article class="finding sev-border-${f.severity}">
 <div class="f-head"><span class="pill sev-${f.severity}">${f.severity}</span><h4>${esc(f.title)}</h4><code class="rule">${esc(f.ruleId)}</code></div>
-<div class="loc">${esc(f.file)}:${f.line}</div>
-<pre class="code">${code.join("")}</pre>
+<div class="loc">${esc(f.file)}:${f.line}${f.commit ? ` in commit ${esc(f.commit)}` : ""}</div>
+${code.length ? `<pre class="code">${code.join("")}</pre>` : ""}
 <p><b>Why it matters.</b> ${prose(f.why)}</p>
 <p><b>How to fix it.</b> ${prose(f.fix)}</p>
 ${f.fixPrompt ? `<details><summary>Prompt for your AI coding tool</summary><pre class="prompt">${esc(f.fixPrompt)}</pre></details>` : ""}

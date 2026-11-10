@@ -26,11 +26,11 @@ describe("rule docs are built from the rules", () => {
     }
   });
 
-  it("is honest about what isn't covered yet", () => {
+  it("is honest about what each rule covers and where it stops", () => {
     const md = rulesMarkdown();
-    expect(md).toContain("Supabase public storage buckets are not checked yet");
-    expect(md).toContain("Doesn't read git history yet");
-    expect(md).toContain("## Not checked yet");
+    expect(md).toContain("Supabase buckets made public");
+    expect(md).toContain("a secret found only there is reported with the commit that added it");
+    expect(md).toContain("needs a connection and is skipped with `--offline`");
   });
 
   it("the HTML page escapes text and has no scripts", () => {
