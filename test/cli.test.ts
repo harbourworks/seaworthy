@@ -234,8 +234,8 @@ describe("Agency", () => {
     const apps = copyApps();
     // Branding lives in the top folder's config, as an agency would set it up.
     writeFileSync(join(apps, "seaworthy.config.json"), JSON.stringify({ report: { agencyName: "Northlight Studio" } }));
-    // chat-agent turns SW-S01 off in its own config; notes-saas keeps defaults.
-    writeFileSync(join(apps, "chat-agent", "seaworthy.config.json"), JSON.stringify({ rules: { "SW-S01": "off" } }));
+    // chat-agent turns its secret rules off in its own config; notes-saas keeps defaults.
+    writeFileSync(join(apps, "chat-agent", "seaworthy.config.json"), JSON.stringify({ rules: { "SW-S01": "off", "SW-S04": "off" } }));
     mkdirSync(join(apps, "empty-folder"));
     const c = cli();
     expect(await c.run(apps, "--all", "--format", "html")).toBe(1);

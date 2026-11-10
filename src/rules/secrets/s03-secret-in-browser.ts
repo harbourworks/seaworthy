@@ -1,30 +1,14 @@
 import type { Confidence } from "../../core/finding.js";
 import type { ProjectFiles } from "../../core/project.js";
 import type { RawFinding, Rule } from "../types.js";
-import { JS_FILE_RE, envReads, inCode, parseJs, walkAst } from "../../core/js.js";
-import { envFiles, parseEnv, publicPrefix } from "./env.js";
+import { codeFiles, envRefs, isServerOnly, mentionsEnv } from "../code.js";
+import { LLM_KEY_NAME, LLM_PATTERN_IDS, envFiles, parseEnv, publicPrefix } from "./env.js";
 import { JWT_RE, SECRET_PATTERNS, decodeJwtPayload, isPlaceholder, shannonEntropy } from "./patterns.js";
 
 /** Names that say "secret" once the public prefix is removed. */
 const SECRET_NAME = /(SERVICE_ROLE|SECRET|PRIVATE|PASSWORD|PASSWD|DATABASE_URL|DB_URL|POSTGRES_URL|MONGODB_URI|ADMIN_KEY)/;
 /** Names that are public by design even though they contain a word above. */
 const PUBLIC_NAME = /(PUBLISHABLE|ANON_KEY|PUBLIC_KEY|SITE_KEY|CLIENT_ID)/;
-/**
- * LLM provider keys are SW-S04's job, in env files and in code, so they are reported once
- * with advice specific to them.
- */
-const LLM_NAME = /(OPENAI|ANTHROPIC|CLAUDE|GROQ|MISTRAL|COHERE|GEMINI|GOOGLE_AI|PERPLEXITY|REPLICATE|TOGETHER|DEEPSEEK|XAI|OPENROUTER|FIREWORKS)/;
-const LLM_PATTERN_IDS = new Set(["openai-key", "anthropic-key"]);
-
-const CODE_FILE_RE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro)$/;
-const SKIP_CODE_RE = /(^|\/)(node_modules|dist|build|\.next)\/|\.(test|spec)\.[cm]?[jt]sx?$|\.d\.ts$/;
-/** process.env.X, process.env["X"], import.meta.env.X, and SvelteKit's $env/static/public imports. */
-const ENV_REF_RE =
-  /\b(?:process\.env|import\.meta\.env)(?:\.([A-Z][A-Z0-9_]*)|\[\s*["'`]([A-Z][A-Z0-9_]*)["'`]\s*\])/g;
-const SVELTE_PUBLIC_IMPORT_RE = /import\s*\{([^}]*)\}\s*from\s*["']\$env\/(?:static|dynamic)\/public["']/g;
-/** Files that only ever run on the server: a public-prefixed secret here is a mistake waiting to spread. */
-const SERVER_ONLY_RE =
-  /(^|\/)(app\/(.*\/)?route\.[cm]?[jt]s$|pages\/api\/|server\/)|\.server\.[cm]?[jt]sx?$|(^|\/)(middleware|instrumentation)\.[jt]s$/;
 
 export const s03SecretInBrowser: Rule = {
   id: "SW-S03",
@@ -56,7 +40,7 @@ function secretName(name: string): boolean {
   const prefix = publicPrefix(name);
   if (!prefix) return false;
   const rest = name.slice(prefix.length);
-  return SECRET_NAME.test(rest) && !PUBLIC_NAME.test(rest) && !LLM_NAME.test(rest);
+  return SECRET_NAME.test(rest) && !PUBLIC_NAME.test(rest) && !LLM_KEY_NAME.test(rest);
 }
 
 /** What a public-prefixed value actually is, judged by its contents. */
@@ -116,71 +100,18 @@ function checkEnvFiles(project: ProjectFiles): RawFinding[] {
   return out;
 }
 
-type Ref = { name: string; offset: number };
-
-/**
- * Environment variables a file actually reads. JS and TS are parsed, so a mention in a
- * comment, a string or documentation doesn't count. Vue, Svelte and Astro files are
- * text-matched inside their script blocks only, skipping comments and strings.
- */
-function envRefs(file: string, text: string): Ref[] {
-  if (JS_FILE_RE.test(file)) {
-    const ast = parseJs(file, text);
-    if (ast) {
-      const refs = envReads(ast);
-      walkAst(ast, (n) => {
-        if (n.type !== "ImportDeclaration" || !/^\$env\/(static|dynamic)\/public$/.test(n.source.value)) return;
-        for (const s of n.specifiers) {
-          if (s.type === "ImportSpecifier") {
-            const name = s.imported.type === "Identifier" ? s.imported.name : s.imported.value;
-            refs.push({ name, offset: s.start ?? 0 });
-          }
-        }
-        return false;
-      });
-      return refs;
-    }
-  }
-  // Script blocks (Vue, Svelte, Astro) and Astro frontmatter; the whole file if it is JS Babel couldn't parse.
-  const regions: Array<[number, string]> = [];
-  if (JS_FILE_RE.test(file)) regions.push([0, text]);
-  else {
-    for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
-      regions.push([m.index! + m[0].indexOf(">") + 1, m[1]!]);
-    }
-    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-    if (fm) regions.push([fm[0].indexOf("\n") + 1, fm[1]!]);
-  }
-  const refs: Ref[] = [];
-  for (const [base, code] of regions) {
-    for (const m of code.matchAll(ENV_REF_RE)) {
-      if (inCode(code, m.index!)) refs.push({ name: (m[1] ?? m[2])!, offset: base + m.index! });
-    }
-    for (const m of code.matchAll(SVELTE_PUBLIC_IMPORT_RE)) {
-      if (!inCode(code, m.index!)) continue;
-      for (const n of m[1]!.split(",")) {
-        const name = n.trim().split(/\s+as\s+/)[0]!.trim();
-        if (name) refs.push({ name, offset: base + m.index! + m[0].indexOf(name) });
-      }
-    }
-  }
-  return refs;
-}
-
 function checkCode(project: ProjectFiles): RawFinding[] {
   const out: RawFinding[] = [];
-  for (const file of project.files) {
-    if (!CODE_FILE_RE.test(file) || SKIP_CODE_RE.test(file)) continue;
+  for (const file of codeFiles(project)) {
     const text = project.read(file);
-    if (!text || !/(?:process\.env|import\.meta\.env|\$env\/)/.test(text)) continue;
+    if (!text || !mentionsEnv(text)) continue;
     const seen = new Set<string>();
     for (const r of envRefs(file, text)) {
       if (!secretName(r.name) || seen.has(r.name)) continue;
       seen.add(r.name);
       const prefix = publicPrefix(r.name)!;
-      const serverOnly = SERVER_ONLY_RE.test(file) || /^\s*["']use server["']/m.test(text) || /from\s+["']server-only["']/.test(text);
-      const clientSide = /^\s*["']use client["']/m.test(text);
-      const confidence: Confidence = serverOnly && !clientSide ? "medium" : "high";
+      const serverOnly = isServerOnly(file, text);
+      const confidence: Confidence = serverOnly ? "medium" : "high";
       const what = kindOf(r.name);
       out.push({
         file,
@@ -189,7 +120,7 @@ function checkCode(project: ProjectFiles): RawFinding[] {
         title: `${what[0]!.toUpperCase()}${what.slice(1)} read from public variable ${r.name}`,
         why:
           `This code reads ${r.name}. The ${prefix} prefix means the build copies the value into browser JavaScript` +
-          (serverOnly && !clientSide
+          (serverOnly
             ? `. This file runs on the server, but the prefix still makes the value public as soon as any browser code uses it.`
             : `, so every visitor can read the ${what}.`) +
           (/SERVICE_ROLE/.test(r.name) ? ` A service-role key bypasses row-level security entirely.` : ``),

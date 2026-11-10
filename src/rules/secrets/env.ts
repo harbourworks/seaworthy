@@ -101,3 +101,13 @@ export function envFiles(project: ProjectFiles): EnvFile[] {
   const all = [...new Set([...walked, ...tracked, ...onDisk])].sort();
   return all.map((path) => ({ path, tracked: tracked.has(path), unignored: walked.has(path) }));
 }
+
+/**
+ * Variable names for LLM provider keys, matched as whole `_`-separated words so that
+ * `NEXT_PUBLIC_OPENAI_API_KEY` counts and `RELAXAIR_URL` doesn't. SW-S04 owns these;
+ * SW-S03 skips them so each problem is reported once.
+ */
+export const LLM_KEY_NAME =
+  /(^|_)(OPENAI|ANTHROPIC|CLAUDE|GROQ|MISTRAL|COHERE|GEMINI|GOOGLE_AI|GOOGLE_GENAI|PERPLEXITY|REPLICATE|TOGETHER|DEEPSEEK|XAI|OPENROUTER|FIREWORKS|HUGGINGFACE|HF)(_|$)/;
+/** Secret patterns (see patterns.ts) that are LLM provider keys. */
+export const LLM_PATTERN_IDS = new Set(["openai-key", "anthropic-key", "huggingface-token"]);

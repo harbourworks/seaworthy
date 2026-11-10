@@ -59,6 +59,15 @@ describe("chat-agent fixture", () => {
       "SW-S01 .cursor/mcp.json:5",
     ]);
   });
+  it("finds the OpenAI key read from a public variable and the browser flag", () => {
+    expect(ids(r).filter((s) => s.startsWith("SW-S04"))).toEqual([
+      "SW-S04 lib/openai-browser.ts:4",
+      "SW-S04 lib/openai-browser.ts:5",
+    ]);
+  });
+  it("does not flag the server-side OpenAI key (decoy)", () => {
+    expect(r.findings.some((f) => f.file === "app/api/assistant/route.ts" && /^SW-S0/.test(f.ruleId))).toBe(false);
+  });
   it("does not flag its .gitignore, which lists .env (decoy)", () => {
     expect(r.findings.some((f) => f.ruleId === "SW-S02")).toBe(false);
   });
@@ -487,5 +496,67 @@ describe("SW-S03 reads code, not mentions", () => {
     expect(run({ "src/broken.js": "const k = process.env.NEXT_PUBLIC_ADMIN_SECRET;\n}}}{{{ <<<\n" })).toEqual([
       "src/broken.js:1",
     ]);
+  });
+});
+
+describe("SW-S04 LLM provider key in client-side code", () => {
+  const run = (files: Record<string, string>) => {
+    const p = project(files);
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-S04");
+    return {
+      all: mine.map((f) => `${f.file}:${f.line} ${f.confidence}`).sort(),
+      titles: mine.map((f) => f.title).sort(),
+      s03: all.findings.filter((f) => f.ruleId === "SW-S03").length,
+    };
+  };
+
+  it("vulnerable: a public-prefixed LLM key in a .env file, by name or by value", () => {
+    const r = run({
+      ".env.local": `NEXT_PUBLIC_OPENAI_API_KEY=${rand(40)}\nVITE_CHAT=sk-ant-api03-${rand(93)}AA\n`,
+    });
+    expect(r.all).toEqual([".env.local:1 high", ".env.local:2 high"]);
+    expect(r.titles).toEqual(["Anthropic key in public variable VITE_CHAT", "OpenAI key in public variable NEXT_PUBLIC_OPENAI_API_KEY"]);
+    expect(r.s03).toBe(0); // reported once, by this rule
+  });
+  it("fixed: server-only key names, and public settings that aren't keys", () => {
+    expect(
+      run({
+        ".env": `OPENAI_API_KEY=sk-proj-${rand(48)}\nNEXT_PUBLIC_OPENAI_MODEL=gpt-4o\nNEXT_PUBLIC_GEMINI_ENABLED=true\n`,
+      }).all,
+    ).toEqual([]);
+  });
+  it("vulnerable: browser code reading the key and switching off the SDK's guard", () => {
+    const r = run({
+      "lib/ai.ts":
+        'import Anthropic from "@anthropic-ai/sdk";\n' +
+        "export const client = new Anthropic({\n  apiKey: import.meta.env.VITE_ANTHROPIC_API_KEY,\n  dangerouslyAllowBrowser: true,\n});\n",
+    });
+    expect(r.all).toEqual(["lib/ai.ts:3 high", "lib/ai.ts:4 high"]);
+  });
+  it("a guard set to false, or mentioned in a comment, is fine", () => {
+    expect(
+      run({
+        "lib/ai.ts":
+          "// never set dangerouslyAllowBrowser: true\nconst c = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, dangerouslyAllowBrowser: false });\n",
+      }).all,
+    ).toEqual([]);
+  });
+  it("in server-only files: the public key name is medium, the guard flag is low", () => {
+    expect(
+      run({
+        "app/api/chat/route.ts":
+          "const c = new OpenAI({ apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY, dangerouslyAllowBrowser: true });\n",
+      }).all,
+    ).toEqual(["app/api/chat/route.ts:1 low", "app/api/chat/route.ts:1 medium"]);
+  });
+  it("reads Vue script blocks", () => {
+    expect(
+      run({
+        "src/Chat.vue":
+          "<template><p>Don't share keys</p></template>\n<script setup>\nconst c = new Groq({ apiKey: import.meta.env.VITE_GROQ_API_KEY, dangerouslyAllowBrowser: true });\n</script>\n",
+      }).titles,
+    ).toEqual(["Groq key read from public variable VITE_GROQ_API_KEY", "LLM SDK told to run in the browser (dangerouslyAllowBrowser)"]);
   });
 });
