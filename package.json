@@ -1,6 +1,6 @@
 {
   "name": "seaworthy-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pre-launch security check for AI-built apps: leaked keys, open database rules, unprotected API routes, unsafe LLM code. Runs locally; your code never leaves your machine.",
   "keywords": [
     "security",
