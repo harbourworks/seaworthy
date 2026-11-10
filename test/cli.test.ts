@@ -6,6 +6,7 @@ import { run, type CliDeps } from "../src/cli/main.js";
 import { MockProvider } from "../src/licensing/mock.js";
 import { PURCHASE_URL } from "../src/licensing/config.js";
 import { DISCLAIMER } from "../src/pro/html.js";
+import { RULES } from "../src/rules/index.js";
 
 const FIXTURES = resolve(__dirname, "../fixtures/apps");
 const PRO_KEY = "SEAWORTHY-TEST-PRO-0001";
@@ -234,8 +235,9 @@ describe("Agency", () => {
     const apps = copyApps();
     // Branding lives in the top folder's config, as an agency would set it up.
     writeFileSync(join(apps, "seaworthy.config.json"), JSON.stringify({ report: { agencyName: "Northlight Studio" } }));
-    // chat-agent turns its secret rules off in its own config; notes-saas keeps defaults.
-    writeFileSync(join(apps, "chat-agent", "seaworthy.config.json"), JSON.stringify({ rules: { "SW-S01": "off", "SW-S04": "off" } }));
+    // chat-agent turns every rule off in its own config; notes-saas keeps defaults.
+    const allOff = Object.fromEntries(RULES.map((r) => [r.id, "off"]));
+    writeFileSync(join(apps, "chat-agent", "seaworthy.config.json"), JSON.stringify({ rules: allOff }));
     mkdirSync(join(apps, "empty-folder"));
     const c = cli();
     expect(await c.run(apps, "--all", "--format", "html")).toBe(1);

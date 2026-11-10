@@ -65,6 +65,9 @@ describe("chat-agent fixture", () => {
       "SW-S04 lib/openai-browser.ts:5",
     ]);
   });
+  it("finds the open Firestore and Storage rules", () => {
+    expect(ids(r).filter((s) => /^SW-D0[34]/.test(s))).toEqual(["SW-D03 firestore.rules:5", "SW-D04 storage.rules:5"]);
+  });
   it("does not flag the server-side OpenAI key (decoy)", () => {
     expect(r.findings.some((f) => f.file === "app/api/assistant/route.ts" && /^SW-S0/.test(f.ruleId))).toBe(false);
   });
@@ -558,5 +561,99 @@ describe("SW-S04 LLM provider key in client-side code", () => {
           "<template><p>Don't share keys</p></template>\n<script setup>\nconst c = new Groq({ apiKey: import.meta.env.VITE_GROQ_API_KEY, dangerouslyAllowBrowser: true });\n</script>\n",
       }).titles,
     ).toEqual(["Groq key read from public variable VITE_GROQ_API_KEY", "LLM SDK told to run in the browser (dangerouslyAllowBrowser)"]);
+  });
+});
+
+describe("SW-D03 and SW-D04 Firebase rules open to everyone", () => {
+  const fb = { "package.json": JSON.stringify({ dependencies: { firebase: "10.7.1" } }) };
+  const run = (files: Record<string, string>) => {
+    const p = project({ ...fb, ...files });
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-D03" || f.ruleId === "SW-D04");
+    return {
+      all: mine.map((f) => `${f.ruleId} ${f.file}:${f.line} ${f.severity} ${f.confidence}`).sort(),
+      titles: mine.map((f) => f.title).sort(),
+    };
+  };
+  const firestore = (body: string, helpers = "") =>
+    `rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n${helpers}${body}\n  }\n}\n`;
+
+  it("vulnerable: everything open to anyone", () => {
+    const r = run({ "firestore.rules": firestore("    match /{document=**} {\n      allow read, write: if true;\n    }") });
+    expect(r.all).toEqual(["SW-D03 firestore.rules:5 critical high"]);
+  });
+  it("vulnerable: Firebase test mode, while the date is in the future", () => {
+    const rule = (y: number) =>
+      firestore(`    match /{document=**} {\n      allow read, write: if request.time < timestamp.date(${y}, 1, 1);\n    }`);
+    expect(run({ "firestore.rules": rule(2099) }).titles).toEqual([
+      "Firestore is in test mode: every document open to anyone until 2099-01-01",
+    ]);
+    expect(run({ "firestore.rules": rule(2020) }).all).toEqual([]); // expired: it denies everyone
+  });
+  it("any signed-in user on everything is high; through a helper function too", () => {
+    const helper = "    function isSignedIn() {\n      return request.auth != null;\n    }\n";
+    const r = run({
+      "firestore.rules": firestore("    match /{document=**} {\n      allow read, write: if isSignedIn();\n    }", helper),
+    });
+    expect(r.all).toEqual(["SW-D03 firestore.rules:8 high high"]);
+    expect(r.titles[0]).toBe("Firestore rules let any signed-in user read and write every document");
+  });
+  it("fixed: rules that check the user are not flagged", () => {
+    expect(
+      run({
+        "firestore.rules": firestore(
+          "    match /notes/{noteId} {\n" +
+            "      allow read, write: if request.auth != null && request.auth.uid == resource.data.ownerId;\n" +
+            "      // allow read, write: if true;\n    }",
+        ),
+      }).all,
+    ).toEqual([]);
+  });
+  it("one collection: a public read is medium, public writes are critical", () => {
+    expect(run({ "firestore.rules": firestore("    match /posts/{id} {\n      allow read;\n    }") }).all).toEqual([
+      "SW-D03 firestore.rules:5 high medium",
+    ]);
+    expect(run({ "firestore.rules": firestore("    match /posts/{id} {\n      allow create: if true\n    }") }).all).toEqual([
+      "SW-D03 firestore.rules:5 critical high",
+    ]);
+    // Signed-in users reading one shared collection is normal.
+    expect(run({ "firestore.rules": firestore("    match /feed/{id} {\n      allow read: if request.auth != null;\n    }") }).all).toEqual([]);
+  });
+  it("finds rules files named in firebase.json", () => {
+    expect(
+      run({
+        "firebase.json": JSON.stringify({ firestore: { rules: "config/db.rules" } }),
+        "config/db.rules": firestore("    match /{document=**} {\n      allow read, write: if true;\n    }"),
+      }).all,
+    ).toEqual(["SW-D03 config/db.rules:5 critical high"]);
+  });
+  it("Realtime Database: open root rules, signed-in writes, and per-user rules", () => {
+    const r = run({
+      "database.rules.json": JSON.stringify(
+        { rules: { ".read": true, ".write": "auth != null", users: { $uid: { ".write": "auth.uid === $uid" } } } },
+        null,
+        2,
+      ),
+    });
+    expect(r.titles).toEqual([
+      "Realtime Database rules let any signed-in user write the whole database",
+      "Realtime Database rules let anyone read the whole database",
+    ]);
+    expect(r.all).toEqual(["SW-D03 database.rules.json:3 high high", "SW-D03 database.rules.json:4 high high"]);
+  });
+  it("SW-D04: open storage, and per-user storage", () => {
+    const storage = (body: string) =>
+      `rules_version = '2';\nservice firebase.storage {\n  match /b/{bucket}/o {\n${body}\n  }\n}\n`;
+    expect(run({ "storage.rules": storage("    match /{allPaths=**} {\n      allow read, write;\n    }") }).all).toEqual([
+      "SW-D04 storage.rules:5 critical high",
+    ]);
+    expect(
+      run({
+        "storage.rules": storage(
+          "    match /users/{userId}/{allPaths=**} {\n      allow read, write: if request.auth != null && request.auth.uid == userId;\n    }",
+        ),
+      }).all,
+    ).toEqual([]);
   });
 });
