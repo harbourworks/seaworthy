@@ -14,12 +14,13 @@ import { BaselineError, extractBaseline } from "../core/baseline.js";
 import { diffFindings } from "../pro/compare.js";
 import { prFailed, prJson, renderPrMarkdown, renderPrTerminal, type PrCheck } from "../pro/pr.js";
 import { initProject } from "./init.js";
-import { FEATURE_LABELS, TIER_INFO, hasFeature, priceLabel, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
+import { FEATURE_LABELS, FEATURE_SHORT, TIER_INFO, hasFeature, priceLabel, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
 import { RULES, findRule } from "../rules/index.js";
 import { renderTerminal } from "../reporters/terminal.js";
 import { renderJson } from "../reporters/json.js";
 import { VERSION } from "../version.js";
-import { PURCHASE_URL, polarSettings } from "../licensing/config.js";
+import { PORTAL_URL, PURCHASE_URL, polarSettings } from "../licensing/config.js";
+import { openUrl as defaultOpenUrl } from "./open.js";
 import type { LicenceProvider } from "../licensing/provider.js";
 import { PolarProvider } from "../licensing/polar.js";
 import { LicenceStore, userConfigDir } from "../licensing/store.js";
@@ -41,9 +42,13 @@ export interface CliDeps {
   provider?: LicenceProvider;
   /** Used for the OSV dependency lookup. Defaults to the global fetch; tests pass a fake. */
   fetch?: typeof fetch;
+  /** A person at a terminal (not CI, not piped): links may be opened in the browser. */
+  interactive?: boolean;
+  /** Opens a link in the browser; false if it couldn't. Tests pass a fake. */
+  openUrl?: (url: string) => boolean;
 }
 
-const COMMANDS = new Set(["scan", "init", "explain", "rules", "login", "logout", "status", "history", "compare"]);
+const COMMANDS = new Set(["scan", "init", "explain", "rules", "buy", "upgrade", "login", "logout", "status", "history", "compare"]);
 
 const HELP = `
   ${pc.bold("seaworthy")}: pre-launch security check for AI-built apps. Runs locally.
@@ -71,8 +76,10 @@ const HELP = `
     --offline                        Make no network calls at all
     -h, --help    -v, --version
 
-  ${pc.bold("Pro and Agency")}  ${pc.dim(PURCHASE_URL)}
+  ${pc.bold("Pro and Agency")}
+    seaworthy buy                    See the plans and open the checkout
     seaworthy login <key>            Turn on your licence on this machine
+                                     (find your key: ${PORTAL_URL})
     seaworthy logout                 Turn it off and free this machine's slot
     seaworthy status                 Show your plan and licence state
     seaworthy history [path]         Scan history and trends            ${pc.dim("Pro")}
@@ -110,6 +117,7 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
         version: { type: "boolean", short: "v" },
         force: { type: "boolean" },
         pr: { type: "boolean" },
+        "no-open": { type: "boolean" },
       },
     });
   } catch (err) {
@@ -135,6 +143,9 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
       return listRules(deps);
     case "init":
       return init(args[0], ctx);
+    case "buy":
+    case "upgrade":
+      return buy(ctx);
     case "login":
       return login(args[0], ctx);
     case "logout":
@@ -507,11 +518,63 @@ function featurePhrase(feature: Feature): string {
 
 // ── Licence commands ────────────────────────────────────────────────────────
 
+/** Opens a link for a person at a terminal, unless --no-open. Never in CI or when piped. */
+function maybeOpen(url: string, ctx: Ctx): boolean {
+  if (!ctx.deps.interactive || ctx.values["no-open"]) return false;
+  return (ctx.deps.openUrl ?? defaultOpenUrl)(url);
+}
+
+/** The plans, the checkout link (opened in the browser at a terminal) and what to do after paying. */
+function buy(ctx: Ctx): number {
+  const { deps, store } = ctx;
+  const order = (fs: readonly Feature[]) => [...fs].sort((a, b) => Number(b === "pr-checks") - Number(a === "pr-checks"));
+  const proOnly = order(TIER_INFO.pro.features);
+  const agencyOnly = TIER_INFO.agency.features.filter((f) => !proOnly.includes(f));
+  const row = (name: string, price: string, what: string) => `  ${pc.bold(name.padEnd(8))}${price.padEnd(24)}${what}`;
+  const out = ["", `  ${pc.bold("Seaworthy plans")}`, ""];
+  out.push(row("Free", "£0", "every check, all free output formats, the CI workflow"));
+  out.push(row("Pro", priceLabel("pro"), `+ ${proOnly.map((f) => FEATURE_SHORT[f]).join(", ")} · ${TIER_INFO.pro.machines} machines`));
+  out.push(row("Agency", priceLabel("agency"), `+ ${agencyOnly.map((f) => FEATURE_SHORT[f]).join(", ")} · ${TIER_INFO.agency.machines} machines`));
+  out.push("");
+  const current = deps.env.SEAWORTHY_LICENCE?.trim() ? null : store.load();
+  if (current && !current.problem) {
+    out.push(pc.dim(`  You're logged in on this machine with Seaworthy ${TIER_INFO[current.tier].name} (${current.displayKey}).`), "");
+  }
+  const opened = maybeOpen(PURCHASE_URL, ctx);
+  out.push(
+    opened
+      ? `  ${pc.green("✔")} Opened the checkout in your browser. If it didn't appear: ${pc.cyan(PURCHASE_URL)}`
+      : `  ${pc.bold("Buy:")} ${pc.cyan(PURCHASE_URL)}`,
+  );
+  out.push(pc.dim("  Payment, tax, invoices and cancelling are handled by Polar, our merchant of record."));
+  out.push("");
+  out.push(`  ${pc.bold("After paying")}`);
+  out.push(`    1. Get your key: ${pc.cyan(PORTAL_URL)}`);
+  out.push(pc.dim("       Enter the email you bought with; the key is under your plan."));
+  out.push(`    2. ${pc.cyan("seaworthy login <key>")}`);
+  out.push(pc.dim("    In CI, add the key as a repository secret called SEAWORTHY_LICENCE instead."));
+  out.push("");
+  deps.out(out.join("\n"));
+  return 0;
+}
+
 async function login(keyArg: string | undefined, ctx: Ctx): Promise<number> {
   const { deps, store, provider, values } = ctx;
   const key = keyArg?.trim();
   if (!key || /\s/.test(key) || key.length > 200) {
-    deps.err(pc.red("  Usage: seaworthy login <licence-key>") + pc.dim(`\n  Your key is in the Polar customer portal, linked from your purchase email. No key yet? ${PURCHASE_URL}`));
+    const opened = !key && maybeOpen(PORTAL_URL, ctx);
+    deps.err(
+      [
+        "",
+        `  ${pc.bold("Usage:")} seaworthy login <licence-key>`,
+        "",
+        `  ${pc.bold("Your key")} is in the customer portal: ${pc.cyan(PORTAL_URL)}${opened ? pc.dim("  (opened in your browser)") : ""}`,
+        "  Enter the email you bought with, type the code Polar emails you, and copy the key",
+        "  shown under your plan. Then run seaworthy login <key>.",
+        pc.dim(`  No plan yet? seaworthy buy`),
+        "",
+      ].join("\n"),
+    );
     return 2;
   }
   if (values.offline) {
@@ -567,13 +630,13 @@ async function login(keyArg: string | undefined, ctx: Ctx): Promise<number> {
 function loginFailure(reason: string, detail: string): string {
   switch (reason) {
     case "invalid":
-      return "That key wasn't recognised. Check you copied all of it from the Polar customer portal (linked from your purchase email).";
+      return `That key wasn't recognised. Check you copied all of it from the customer portal: ${PORTAL_URL}`;
     case "revoked":
       return `That key is no longer active; the subscription may have ended. Renew at ${PURCHASE_URL}.`;
     case "expired":
       return `That key has expired. Renew at ${PURCHASE_URL}.`;
     case "machine-limit":
-      return "That key is already in use on as many machines as your plan allows. Run seaworthy logout on one you no longer use, or remove it in the customer portal linked from your purchase email.";
+      return `That key is already in use on as many machines as your plan allows. Run seaworthy logout on one you no longer use, or remove it in the customer portal: ${PORTAL_URL}`;
     case "not-seaworthy":
       return "That key isn't a Seaworthy licence. Check you copied the right one.";
     case "unreachable":
@@ -604,7 +667,7 @@ async function logout(ctx: Ctx): Promise<number> {
     `\n  ${pc.green("✔")} Logged out. Seaworthy is back on the Free plan on this machine.` +
       (freed
         ? pc.dim(`\n  This machine's slot on ${existing.displayKey} is free again.`)
-        : pc.yellow(`\n  Couldn't reach the licence server to free this machine's slot. Remove "${existing.machineLabel}" in the customer portal if you need it.`)) +
+        : pc.yellow(`\n  Couldn't reach the licence server to free this machine's slot. Remove "${existing.machineLabel}" in the customer portal if you need it: ${PORTAL_URL}`)) +
       "\n",
   );
   return 0;
@@ -625,7 +688,7 @@ async function status(ctx: Ctx): Promise<number> {
     out.push(`  ${pc.bold("Seaworthy Free")}  ${pc.dim("· every check, terminal, JSON and CI output")}`);
     out.push(`  Pro (${priceLabel("pro")}) adds ${TIER_INFO.pro.features.map(featurePhrase).join(", ")}.`);
     out.push(`  Agency (${priceLabel("agency")}) adds white-label reports and --all.`);
-    out.push(pc.dim(`  ${PURCHASE_URL}`));
+    out.push(`  ${pc.cyan("seaworthy buy")} to open the checkout, then ${pc.cyan("seaworthy login <key>")}.`);
     out.push("");
     deps.out(out.join("\n"));
     return 0;

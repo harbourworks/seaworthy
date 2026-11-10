@@ -20,14 +20,18 @@ Founding-member pricing at launch is a Polar discount, not a code change. Monthl
 
 **Free is never blocked or degraded.** Using a paid feature without the right plan still runs the scan with terminal output and the normal exit code, and prints one line naming the plan that unlocks it.
 
-## Using a licence
+## Buying and using a licence
 
 ```
+seaworthy buy             # the plans, and the checkout opened in your browser
+seaworthy login           # (no key) where to find it: the portal, opened in your browser
 seaworthy login <key>     # activates this machine (uses one of its slots)
 seaworthy status          # plan, key (masked), machine, last check, offline grace
 seaworthy logout          # frees this machine's slot
 ```
 
+- **Your key** is in the customer portal, https://polar.sh/dynamo-maritime/portal: enter the email you bought with, type the verification code Polar sends, and copy the key under your plan. Every message that mentions the key links there (`PORTAL_URL` in `src/licensing/config.ts`).
+- Links open in the browser only for a person at a terminal: never in CI, never when output is piped, and never with `--no-open`.
 - The licence is saved in your user config folder (`%APPDATA%\seaworthy` on Windows, `~/Library/Application Support/seaworthy` on macOS, `~/.config/seaworthy` on Linux), never in a project.
 - **CI:** set `SEAWORTHY_LICENCE` to the key. It takes priority over a saved login and does not use up a machine slot per run.
 - **What is sent:** only the licence key, the machine label (your computer's name, or `--label`) and the IDs the licence server issued. Never code, findings or file names.

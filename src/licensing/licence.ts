@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import type { Tier } from "../core/entitlements.js";
-import { OFFLINE_GRACE_DAYS, PURCHASE_URL, REVALIDATE_AFTER_HOURS } from "./config.js";
+import { OFFLINE_GRACE_DAYS, PORTAL_URL, PURCHASE_URL, REVALIDATE_AFTER_HOURS } from "./config.js";
 import type { FailureReason, LicenceProvider } from "./provider.js";
 import type { LicenceRecord, LicenceStore } from "./store.js";
 
@@ -193,7 +193,7 @@ export function problemMessage(problem: NonNullable<LicenceRecord["problem"]>): 
     case "expired":
       return `Your Seaworthy licence has expired. Renew at ${PURCHASE_URL}, then run seaworthy login <key>.`;
     case "activation-removed":
-      return "This machine was removed from your licence. Run seaworthy login <key> to add it back.";
+      return `This machine was removed from your licence. Run seaworthy login <key> to add it back (your key: ${PORTAL_URL}).`;
     case "not-seaworthy":
       return "That key isn't a Seaworthy licence. Check you copied the right one, then run seaworthy login <key>.";
   }
