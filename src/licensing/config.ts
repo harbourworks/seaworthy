@@ -8,6 +8,13 @@ import type { Tier } from "../core/entitlements.js";
 export const PURCHASE_URL = "https://buy.polar.sh/polar_cl_kHaCRzNrtLS4EE3Pm5WcMzQDgJRB6Fsxd5mim4NgS4x";
 
 /**
+ * Where customers find their licence key: Polar's customer portal for Dynamo Maritime. They
+ * enter the email they bought with, Polar emails a sign-in code, and the key is under the
+ * plan's benefits. It also manages machines, invoices and cancelling.
+ */
+export const PORTAL_URL = "https://polar.sh/dynamo-maritime/portal";
+
+/**
  * Polar settings for each server. These IDs are public (they ship in the CLI) and are
  * deliberately NOT overridable from the environment: if they were, anyone could point the
  * CLI at their own Polar organisation and mint themselves an Agency key.

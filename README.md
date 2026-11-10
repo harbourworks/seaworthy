@@ -82,9 +82,15 @@ Seaworthy reads your files locally and never sends code, findings or file names 
 
 Every check is free. **Pro** (£12 a month or £99 a year) adds pull-request checks that show only new problems, a self-contained HTML report, scan history and before/after comparison. **Agency** (£349 a year) adds white-label reports and scanning every project in a folder. Paid features never block a scan. See [dynamomaritime.com/seaworthy](https://dynamomaritime.com/seaworthy).
 
+Buying and using a plan takes three steps:
+
 ```
-seaworthy login <licence-key>     # your key is in the Polar customer portal
+npx seaworthy-cli buy              # see the plans and open the checkout
+                                   # then get your key: https://polar.sh/dynamo-maritime/portal
+npx seaworthy-cli login <key>      # turn it on for this machine
 ```
+
+In the portal, enter the email you bought with and Polar sends a verification code; your key is under your plan. In CI, add the key as a repository secret called `SEAWORTHY_LICENCE` instead of logging in.
 
 ## It's an aid, not a guarantee
 

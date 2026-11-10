@@ -7,6 +7,7 @@ run(process.argv.slice(2), {
   env: process.env,
   cwd: process.cwd(),
   now: () => new Date(),
+  interactive: Boolean(process.stdout.isTTY) && !process.env.CI,
 })
   .then((code) => {
     process.exitCode = code;

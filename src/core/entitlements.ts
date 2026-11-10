@@ -49,6 +49,16 @@ export const FEATURE_LABELS: Record<Feature, string> = {
   "scan-all": "Scanning every project in a folder (--all)",
 };
 
+/** A few words each, for one-line plan summaries (seaworthy buy). Pull-request checks lead. */
+export const FEATURE_SHORT: Record<Feature, string> = {
+  "pr-checks": "pull-request checks",
+  "html-report": "HTML reports",
+  history: "history",
+  compare: "compare",
+  "white-label": "white-label reports",
+  "scan-all": "--all",
+};
+
 /** "£12/month or £99/year", or "£349/year" for a plan with no monthly option. */
 export function priceLabel(tier: Exclude<Tier, "free">): string {
   const t = TIER_INFO[tier];
