@@ -80,6 +80,9 @@ describe("chat-agent fixture", () => {
   it("does not flag the chat page's fixed system prompt (decoy)", () => {
     expect(r.findings.some((f) => f.ruleId === "SW-L01" && f.file === "app/chat/page.tsx")).toBe(false);
   });
+  it("finds the wildcard CORS and the missing rate limit on the assistant route", () => {
+    expect(ids(r).filter((s) => /^SW-A0[34]/.test(s))).toEqual(["SW-A03 app/api/assistant/route.ts:34", "SW-A04 app/api/assistant/route.ts:10"]);
+  });
   it("finds the unauthenticated assistant route and nothing else", () => {
     expect(ids(r).filter((s) => s.startsWith("SW-A01"))).toEqual(["SW-A01 app/api/assistant/route.ts:34"]);
   });
@@ -1131,6 +1134,70 @@ describe("SW-P02 price or amount taken from the client", () => {
         ),
         "app/api/e/route.ts": handler("  await stripe.paymentIntents.create({ amount: 9900, currency: 'gbp' });"),
       }).all,
+    ).toEqual([]);
+  });
+});
+
+describe("SW-A04 CORS that lets any site make credentialed requests", () => {
+  const run = (files: Record<string, string>) => {
+    const p = project(files);
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-A04");
+    return { all: mine.map((f) => `${f.file}:${f.line}`).sort(), titles: mine.map((f) => f.title).sort() };
+  };
+  it("vulnerable: wildcard with credentials, echoed origins and the cors package", () => {
+    const r = run({
+      "app/api/a/route.ts": "const H = {\n  'Access-Control-Allow-Origin': '*',\n  'Access-Control-Allow-Credentials': 'true',\n};\n",
+      "app/api/b/route.ts":
+        "export async function GET(req: Request) {\n  const h = new Headers();\n  h.set('Access-Control-Allow-Origin', req.headers.get('origin') ?? '');\n  h.set('Access-Control-Allow-Credentials', 'true');\n}\n",
+      "server/app.js": "app.use(cors({ origin: true, credentials: true }));\n",
+    });
+    expect(r.all).toEqual(["app/api/a/route.ts:2", "app/api/b/route.ts:3", "server/app.js:1"]);
+    expect(r.titles).toContain("CORS echoes back any origin, with credentials");
+  });
+  it("fixed: wildcard without credentials, or an allow-list", () => {
+    expect(
+      run({
+        "app/api/public/route.ts": "const H = { 'Access-Control-Allow-Origin': '*' };\n",
+        "app/api/c/route.ts":
+          "const ALLOWED = ['https://app.example.com'];\nconst o = req.headers.get('origin');\nif (ALLOWED.includes(o)) h.set('Access-Control-Allow-Origin', o);\nh.set('Access-Control-Allow-Credentials', 'true');\n",
+        "server/app.js": "app.use(cors({ origin: ['https://app.example.com'], credentials: true }));\n",
+      }).all,
+    ).toEqual([]);
+  });
+});
+
+describe("SW-A03 costly endpoint with no rate limit", () => {
+  const next = { "package.json": JSON.stringify({ dependencies: { next: "14.2.3" } }) };
+  const run = (files: Record<string, string>) => {
+    const p = project({ ...next, ...files });
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-A03");
+    return { all: mine.map((f) => `${f.file}:${f.line}`).sort(), whys: mine.map((f) => f.why) };
+  };
+  it("vulnerable: AI calls, email and password checks with no limit", () => {
+    const r = run({
+      "app/api/chat/route.ts": "export async function POST(req: Request) {\n  return Response.json(await openai.chat.completions.create({}));\n}\n",
+      "app/api/invite/route.ts": "export async function POST(req: Request) {\n  await resend.emails.send({ to, subject });\n}\n",
+      "app/api/login/route.ts": "export async function POST(req: Request) {\n  const ok = await bcrypt.compare(password, user.hash);\n}\n",
+      "app/api/notes/route.ts": "export async function GET() { return Response.json([]); }\n",
+    });
+    expect(r.all).toEqual(["app/api/chat/route.ts:1", "app/api/invite/route.ts:1", "app/api/login/route.ts:1"]);
+    expect(r.whys.some((w) => w.includes("paid AI model"))).toBe(true);
+  });
+  it("fixed: a limiter in the handler, an imported helper, or middleware", () => {
+    const chat = "export async function POST(req: Request) {\n  CHECK\n  return Response.json(await openai.chat.completions.create({}));\n}\n";
+    expect(run({ "app/api/a/route.ts": chat.replace("CHECK", "const { success } = await ratelimit.limit(ip);") }).all).toEqual([]);
+    expect(
+      run({
+        "lib/limit.ts": "export const guard = new Ratelimit({ limiter: Ratelimit.slidingWindow(10, '1 m') });\n",
+        "app/api/b/route.ts": "import { guard } from '@/lib/limit';\n" + chat.replace("CHECK", "await guard.limit(ip);"),
+      }).all,
+    ).toEqual([]);
+    expect(
+      run({ "middleware.ts": "const rl = new Ratelimit({});\nexport async function middleware(req) { await rl.limit(ip); }\n", "app/api/c/route.ts": chat.replace("CHECK", "") }).all,
     ).toEqual([]);
   });
 });
