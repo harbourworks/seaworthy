@@ -1,10 +1,13 @@
 import type { Confidence, Finding, Severity } from "../core/finding.js";
 import type { ProjectFiles } from "../core/project.js";
 import type { StackFeature } from "../core/stack.js";
+import type { OsvResult } from "../deps/osv.js";
 
 export interface RuleContext {
   project: ProjectFiles;
   stack: ReadonlySet<StackFeature>;
+  /** Known vulnerabilities for this project's dependencies, fetched before the scan. Absent in tests and library use. */
+  osv?: OsvResult;
 }
 
 /** What a rule reports. The scanner fills in the rest from the rule's metadata. */

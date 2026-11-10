@@ -6,6 +6,8 @@ import { ConfigError, hasBranding, loadConfig, mergeConfig, type Config } from "
 import { scan, type ScanResult } from "../core/scan.js";
 import { ProjectFiles } from "../core/project.js";
 import { excluder, walk } from "../core/walk.js";
+import { directDependencies } from "../deps/dependencies.js";
+import { lookupAdvisories, type OsvResult } from "../deps/osv.js";
 import { FEATURE_LABELS, TIER_INFO, hasFeature, priceLabel, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
 import { RULES, findRule } from "../rules/index.js";
 import { renderTerminal } from "../reporters/terminal.js";
@@ -31,6 +33,8 @@ export interface CliDeps {
   now: () => Date;
   /** Defaults to Polar. Tests pass a MockProvider. */
   provider?: LicenceProvider;
+  /** Used for the OSV dependency lookup. Defaults to the global fetch; tests pass a fake. */
+  fetch?: typeof fetch;
 }
 
 const COMMANDS = new Set(["scan", "explain", "rules", "login", "logout", "status", "history", "compare"]);
@@ -216,7 +220,16 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
       }
       throw err;
     }
-    const result = scan(p.dir, config, RULES);
+    const osv = await dependencyLookup(p.dir, config, deps);
+    const result = scan(p.dir, config, RULES, { osv });
+    const label = multi ? `${p.name}: ` : "";
+    if (osv?.status === "ok" && osv.checked > 0) {
+      notes.push(`${label}Checked ${osv.checked} ${osv.checked === 1 ? "dependency" : "dependencies"} against OSV (osv.dev). Only package names and versions were sent.`);
+    } else if (osv?.status === "offline") {
+      notes.push(`${label}Dependency check skipped (offline).`);
+    } else if (osv?.status === "failed") {
+      notes.push(`${label}Dependency check skipped: ${osv.reason}. The rest of the scan is complete.`);
+    }
     const project = new ProjectFiles(p.dir, walk(p.dir, config.ignore).files, excluder(config.ignore));
     let comparison: Comparison | null = null;
     if (recordHistory) {
@@ -254,6 +267,16 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
     }
   }
   return finish(failed ? 1 : 0);
+}
+
+/** Fetches known vulnerabilities for a project's dependencies, unless offline or SW-X01 is off. */
+async function dependencyLookup(dir: string, config: Config, deps: CliDeps): Promise<OsvResult | undefined> {
+  if (config.rules["SW-X01"] === "off") return undefined;
+  if (config.offline) return { status: "offline" };
+  const project = new ProjectFiles(dir, walk(dir, config.ignore).files, excluder(config.ignore));
+  const list = directDependencies(project);
+  if (list.length === 0) return undefined;
+  return lookupAdvisories(list, deps.fetch ?? fetch);
 }
 
 function printTerminal(scanned: ReportProject[], multi: boolean, deps: CliDeps) {

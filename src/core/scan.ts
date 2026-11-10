@@ -6,6 +6,7 @@ import { detectStack, type StackFeature } from "./stack.js";
 import { applySuppressions, type SuppressionProblem } from "./suppress.js";
 import { excluder, walk } from "./walk.js";
 import type { Rule } from "../rules/types.js";
+import type { OsvResult } from "../deps/osv.js";
 
 export interface ScanResult {
   root: string;
@@ -25,7 +26,7 @@ export interface ScanResult {
   durationMs: number;
 }
 
-export function scan(root: string, config: Config, rules: Rule[]): ScanResult {
+export function scan(root: string, config: Config, rules: Rule[], extras: { osv?: OsvResult } = {}): ScanResult {
   const started = performance.now();
   const { files, skippedLarge } = walk(root, config.ignore);
   const project = new ProjectFiles(root, files, excluder(config.ignore));
@@ -41,7 +42,7 @@ export function scan(root: string, config: Config, rules: Rule[]): ScanResult {
   const ruleErrors: ScanResult["ruleErrors"] = [];
   for (const rule of active) {
     try {
-      for (const raw of rule.check({ project, stack })) {
+      for (const raw of rule.check({ project, stack, osv: extras.osv })) {
         all.push({
           ruleId: rule.id,
           title: raw.title ?? rule.title,

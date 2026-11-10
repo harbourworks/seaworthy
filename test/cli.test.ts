@@ -22,7 +22,14 @@ let work: string;
 let provider: MockProvider;
 let clock: Date;
 
-function cli() {
+/** OSV with no known vulnerabilities, so CLI tests never touch the network. */
+const quietOsv = (async (url: string, init?: RequestInit) => {
+  if (!url.endsWith("/querybatch")) return new Response("{}", { status: 404 });
+  const { queries } = JSON.parse(String(init!.body)) as { queries: unknown[] };
+  return new Response(JSON.stringify({ results: queries.map(() => ({})) }));
+}) as unknown as typeof fetch;
+
+function cli(fetchImpl: typeof fetch = quietOsv) {
   const out: string[] = [];
   const err: string[] = [];
   const deps: CliDeps = {
@@ -32,6 +39,7 @@ function cli() {
     cwd: work,
     now: () => clock,
     provider,
+    fetch: fetchImpl,
   };
   return { deps, out, err, all: () => [...out, ...err].join("\n"), run: (...argv: string[]) => run(argv, deps) };
 }
@@ -267,5 +275,25 @@ describe("hygiene", () => {
   it("PURCHASE_URL is defined once", () => {
     const src = readFileSync(resolve(__dirname, "../src/licensing/config.ts"), "utf8");
     expect(src).toContain("export const PURCHASE_URL");
+  });
+});
+
+describe("dependency check notes", () => {
+  it("says what it checked and what it sent, skips when offline, and survives OSV being down", async () => {
+    const apps = copyApps();
+    const ok = cli();
+    await ok.run(join(apps, "notes-saas"));
+    expect(ok.all()).toContain("Checked 6 dependencies against OSV (osv.dev). Only package names and versions were sent.");
+
+    const off = cli();
+    await off.run(join(apps, "notes-saas"), "--offline");
+    expect(off.all()).toContain("Dependency check skipped (offline).");
+
+    const down = cli((async () => {
+      throw new TypeError("fetch failed");
+    }) as unknown as typeof fetch);
+    const code = await down.run(join(apps, "notes-saas"));
+    expect(down.all()).toContain("Dependency check skipped: couldn't reach OSV. The rest of the scan is complete.");
+    expect(code).toBe(1); // the scan still ran and found the planted flaws
   });
 });
