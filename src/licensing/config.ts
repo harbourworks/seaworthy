@@ -1,19 +1,20 @@
 import type { Tier } from "../core/entitlements.js";
 
 /**
- * Where people buy a licence. One constant, because the domain is not registered yet.
- * Change it here and every message, report and doc string follows.
+ * Where people buy a licence: Polar's hosted checkout, which offers Pro monthly, Pro yearly
+ * and Agency. One constant, so when a pricing page exists, changing it here moves every
+ * message, report and doc string.
  */
-export const PURCHASE_URL = "https://seaworthy.sh/pricing";
+export const PURCHASE_URL = "https://buy.polar.sh/polar_cl_kHaCRzNrtLS4EE3Pm5WcMzQDgJRB6Fsxd5mim4NgS4x";
 
 /**
  * Polar settings for each server. These IDs are public (they ship in the CLI) and are
  * deliberately NOT overridable from the environment: if they were, anyone could point the
  * CLI at their own Polar organisation and mint themselves an Agency key.
  *
- * The all-zero IDs are placeholders until the Polar organisation and products exist.
- * While they are placeholders, `seaworthy login` explains that licensing is not set up in
- * this build rather than calling Polar.
+ * Production holds Dynamo Maritime's real Polar organisation (set up 10 November 2026).
+ * The sandbox still has placeholders; while a server has them, `seaworthy login` explains
+ * that licensing is not set up rather than calling Polar.
  */
 export interface PolarSettings {
   apiBase: string;
@@ -27,10 +28,12 @@ const PLACEHOLDER = "00000000-0000-0000-0000-000000000000";
 export const POLAR_SERVERS: Record<"production" | "sandbox", PolarSettings> = {
   production: {
     apiBase: "https://api.polar.sh",
-    organizationId: PLACEHOLDER,
+    organizationId: "a4a6a28a-20f3-4b1f-9211-7eccab46ff92",
     benefits: {
-      // "<pro licence-key benefit id>": "pro",
-      // "<agency licence-key benefit id>": "agency",
+      // Pro monthly and Pro yearly share this licence-key benefit (2 activations).
+      "298917da-ddc9-4565-a713-2ea855db464f": "pro",
+      // Agency (10 activations).
+      "c23b4b3d-8dcf-4ec3-a4b1-aefd5f810ea7": "agency",
     },
   },
   sandbox: {

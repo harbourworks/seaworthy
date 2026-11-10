@@ -7,7 +7,7 @@ import { MockProvider } from "../src/licensing/mock.js";
 import { LicenceStore, userConfigDir } from "../src/licensing/store.js";
 import { resolveLicence } from "../src/licensing/licence.js";
 import { PolarProvider } from "../src/licensing/polar.js";
-import type { PolarSettings } from "../src/licensing/config.js";
+import { POLAR_SERVERS, PURCHASE_URL, isConfigured, type PolarSettings } from "../src/licensing/config.js";
 
 const DAY = 86_400_000;
 const PRO_KEY = "SEAWORTHY-TEST-PRO-0001";
@@ -237,5 +237,20 @@ describe("PolarProvider (fake fetch, no network)", () => {
     const p = new PolarProvider({ apiBase: "https://polar.test", organizationId: "00000000-0000-0000-0000-000000000000", benefits: {} }, f);
     expect(await p.activate("K", "m")).toMatchObject({ ok: false, reason: "not-configured" });
     expect(sent).toEqual([]);
+  });
+});
+
+describe("production Polar config", () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  it("is set up with real IDs for both paid tiers", () => {
+    const p = POLAR_SERVERS.production;
+    expect(isConfigured(p)).toBe(true);
+    expect(p.organizationId).toMatch(UUID);
+    for (const id of Object.keys(p.benefits)) expect(id).toMatch(UUID);
+    expect(Object.values(p.benefits).sort()).toEqual(["agency", "pro"]);
+    expect(p.apiBase).toBe("https://api.polar.sh");
+  });
+  it("points purchases at Polar's checkout", () => {
+    expect(PURCHASE_URL).toMatch(/^https:\/\/buy\.polar\.sh\//);
   });
 });
