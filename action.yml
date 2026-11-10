@@ -13,7 +13,7 @@ inputs:
     description: Fail at or above this severity (critical, high, medium or low). Empty uses seaworthy.config.json, which defaults to high.
     default: ""
   upload-sarif:
-    description: Upload findings to GitHub code scanning (needs `security-events: write`). Set to false to skip.
+    description: "Upload findings to GitHub code scanning (needs the security-events: write permission). Set to false to skip."
     default: "true"
   version:
     description: The seaworthy-cli version to run, as an npm version or range.
