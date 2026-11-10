@@ -355,7 +355,7 @@ async function login(keyArg: string | undefined, ctx: Ctx): Promise<number> {
   const { deps, store, provider, values } = ctx;
   const key = keyArg?.trim();
   if (!key || /\s/.test(key) || key.length > 200) {
-    deps.err(pc.red("  Usage: seaworthy login <licence-key>") + pc.dim(`\n  Your key is in your purchase email. No key yet? ${PURCHASE_URL}`));
+    deps.err(pc.red("  Usage: seaworthy login <licence-key>") + pc.dim(`\n  Your key is in the Polar customer portal, linked from your purchase email. No key yet? ${PURCHASE_URL}`));
     return 2;
   }
   if (values.offline) {
@@ -411,7 +411,7 @@ async function login(keyArg: string | undefined, ctx: Ctx): Promise<number> {
 function loginFailure(reason: string, detail: string): string {
   switch (reason) {
     case "invalid":
-      return "That key wasn't recognised. Check you copied all of it from your purchase email.";
+      return "That key wasn't recognised. Check you copied all of it from the Polar customer portal (linked from your purchase email).";
     case "revoked":
       return `That key is no longer active; the subscription may have ended. Renew at ${PURCHASE_URL}.`;
     case "expired":
