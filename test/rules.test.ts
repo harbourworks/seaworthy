@@ -1352,3 +1352,58 @@ describe("SW-A04 in nginx config", () => {
     ).toEqual([]);
   });
 });
+
+describe("SW-D04 Supabase public buckets", () => {
+  const supa = { "package.json": JSON.stringify({ dependencies: { "@supabase/supabase-js": "2.45.0" } }) };
+  const run = (files: Record<string, string>) => {
+    const p = project({ ...supa, ...files });
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    return all.findings.filter((f) => f.ruleId === "SW-D04").map((f) => `${f.file}:${f.line} ${f.severity} ${f.confidence} ${f.title}`).sort();
+  };
+  const mig = "supabase/migrations/0001_storage.sql";
+
+  it("flags public buckets for private files in SQL, medium for vague names, and leaves image buckets alone", () => {
+    expect(
+      run({
+        [mig]:
+          "-- buckets\ninsert into storage.buckets (id, name, public, allowed_mime_types)\nvalues\n  ('invoices', 'invoices', true, array['application/pdf']),\n  ('avatars', 'avatars', true, null),\n  ('uploads', 'uploads', true, null),\n  ('secure-docs', 'secure-docs', false, null)\non conflict (id) do nothing;\n",
+      }),
+    ).toEqual([
+      `${mig}:4 high high Supabase storage bucket "invoices" is public`,
+      `${mig}:6 medium medium Supabase storage bucket "uploads" is public`,
+    ]);
+  });
+
+  it("follows later migrations: made private, made public, deleted", () => {
+    expect(
+      run({
+        "supabase/migrations/0001_a.sql": "insert into storage.buckets (id, name, public) values ('contracts', 'contracts', true);\ninsert into storage.buckets (id, name, public) values ('kyc-scans', 'kyc-scans', false);\ninsert into storage.buckets (id, name, public) values ('statements', 'statements', true);\n",
+        "supabase/migrations/0002_b.sql": "update storage.buckets set public = false where id = 'contracts';\nupdate storage.buckets set public = true where id = 'kyc-scans';\ndelete from storage.buckets where id = 'statements';\n",
+      }),
+    ).toEqual([`supabase/migrations/0002_b.sql:2 high high Supabase storage bucket "kyc-scans" is public`]);
+  });
+
+  it("reads supabase/config.toml and createBucket calls, including seed.sql", () => {
+    expect(
+      run({
+        "supabase/config.toml": "[storage]\nenabled = true\n\n[storage.buckets.receipts]\npublic = true\nfile_size_limit = \"50MiB\"\n\n[storage.buckets.images]\npublic = true\n\n[storage.buckets.private-files]\npublic = false\n",
+        "scripts/setup.ts": 'await supabase.storage.createBucket("medical-records", { public: true, fileSizeLimit: 1024 });\nawait supabase.storage.createBucket("thumbnails", { public: true });\nawait supabase.storage.createBucket("passports", { public: false });\n',
+        "supabase/seed.sql": "insert into storage.buckets (id, name, public) values ('payslips', 'payslips', true);\n",
+      }),
+    ).toEqual([
+      `scripts/setup.ts:1 high high Supabase storage bucket "medical-records" is public`,
+      `supabase/config.toml:4 high high Supabase storage bucket "receipts" is public`,
+      `supabase/seed.sql:1 high high Supabase storage bucket "payslips" is public`,
+    ]);
+  });
+
+  it("a private bucket is clean, and a supabase/ folder alone is enough to turn the check on", () => {
+    expect(run({ [mig]: "insert into storage.buckets (id, name, public) values ('invoices', 'invoices', false);\n" })).toEqual([]);
+    const p = project({ [mig]: "insert into storage.buckets (id, name, public) values ('invoices', 'invoices', true);\n" });
+    const noStack = scan(p.root, DEFAULT_CONFIG, RULES);
+    p.done();
+    // supabase/ alone is enough to detect the stack, so this project still counts as Supabase.
+    expect(noStack.findings.some((f) => f.ruleId === "SW-D04")).toBe(true);
+  });
+});

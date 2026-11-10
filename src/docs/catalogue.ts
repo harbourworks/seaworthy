@@ -19,7 +19,7 @@ export const COVERAGE: Record<string, string> = {
   "SW-D01": "Supabase SQL migrations (`supabase/migrations/*.sql`), in order, including later `enable` and `disable`, renames and drops.",
   "SW-D02": "Policies in Supabase SQL migrations or `supabase db dump` output whose `using` or `with check` is always true or only checks that someone is logged in.",
   "SW-D03": "Firestore security rules and Realtime Database JSON rules, found directly or through firebase.json.",
-  "SW-D04": "Firebase Cloud Storage rules only. Supabase public storage buckets are not checked yet.",
+  "SW-D04": "Firebase Cloud Storage rules, and Supabase buckets made public in SQL (migrations and seed.sql), supabase/config.toml or createBucket/updateBucket calls. A public bucket whose name suggests private files (invoices, documents, ID scans) is high; one with a neutral name is medium, at medium confidence; buckets for images and avatars aren't flagged.",
   "SW-P01": "Stripe webhook handlers that act on real Stripe event names without `constructEvent` or `events.retrieve`, in the file or a local helper it imports.",
   "SW-P02": "Amounts, prices and discounts in Stripe create and update calls that come from request input.",
   "SW-A01": "Next.js route handlers and server actions that change data or use an admin database client without checking who is calling.",
@@ -62,7 +62,7 @@ export function catalogue(): CatalogueEntry[] {
 export const READS =
   "JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03).";
 
-export const STILL_TO_COME = ["Made-up or brand-new dependencies", "Supabase public storage buckets", "Secrets in git history"];
+export const STILL_TO_COME = ["Secrets in git history"];
 
 const SITE = "https://dynamomaritime.com";
 export const LINKS = {

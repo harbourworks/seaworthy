@@ -15,7 +15,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 | [SW-D01](#sw-d01) | Table without row-level security | critical | Supabase |
 | [SW-D02](#sw-d02) | Row-level security policy that allows everyone | high | Supabase |
 | [SW-D03](#sw-d03) | Firebase database rules open to everyone | critical | Firebase |
-| [SW-D04](#sw-d04) | Storage open to everyone | high | Firebase |
+| [SW-D04](#sw-d04) | Storage open to everyone | high | Firebase, Supabase |
 | [SW-P01](#sw-p01) | Stripe webhook does not verify the signature | critical | Stripe |
 | [SW-P02](#sw-p02) | Price or amount taken from the client | high | Stripe |
 | [SW-A01](#sw-a01) | API route with no auth check | high | Next.js |
@@ -89,11 +89,11 @@ Firebase apps talk to Firestore and the Realtime Database straight from the brow
 
 ## SW-D04
 
-**Storage open to everyone** · high · runs on: Firebase
+**Storage open to everyone** · high · runs on: Firebase, Supabase
 
-Storage rules decide who can upload, download and delete files. With no condition, `if true` or test-mode rules, anyone can download every file (ID scans, invoices, private photos), overwrite them, or fill your bucket and your bill. Rules should tie files to the user who owns them.
+Storage rules decide who can upload, download and delete files. With no condition, `if true` or test-mode rules, anyone can download every file (ID scans, invoices, private photos), overwrite them, or fill your bucket and your bill. Rules should tie files to the user who owns them. In Supabase, a bucket marked public serves every file to anyone with its URL, with no login at all: right for avatars, wrong for invoices or documents.
 
-**Checks:** Firebase Cloud Storage rules only. Supabase public storage buckets are not checked yet.
+**Checks:** Firebase Cloud Storage rules, and Supabase buckets made public in SQL (migrations and seed.sql), supabase/config.toml or createBucket/updateBucket calls. A public bucket whose name suggests private files (invoices, documents, ID scans) is high; one with a neutral name is medium, at medium confidence; buckets for images and avatars aren't flagged.
 
 ## SW-P01
 
@@ -209,8 +209,6 @@ A few response headers make whole classes of attack harder: Content-Security-Pol
 
 ## Not checked yet
 
-- Made-up or brand-new dependencies
-- Supabase public storage buckets
 - Secrets in git history
 
 *Seaworthy catches common, serious mistakes. It is not a security audit or a guarantee.*

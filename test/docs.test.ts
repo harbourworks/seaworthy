@@ -28,7 +28,7 @@ describe("rule docs are built from the rules", () => {
 
   it("is honest about what isn't covered yet", () => {
     const md = rulesMarkdown();
-    expect(md).toContain("Supabase public storage buckets are not checked yet");
+    expect(md).toContain("Supabase buckets made public");
     expect(md).toContain("Doesn't read git history yet");
     expect(md).toContain("## Not checked yet");
   });
