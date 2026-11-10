@@ -42,7 +42,7 @@ export function renderTerminal(result: ScanResult, project: ProjectFiles, versio
   return out.join("\n");
 }
 
-function renderFinding(f: Finding, project: ProjectFiles): string[] {
+export function renderFinding(f: Finding, project: ProjectFiles): string[] {
   const lines = project.lines(f.file);
   const out = [
     `  ${BADGE[f.severity](` ${f.severity.toUpperCase()} `)}  ${pc.bold(f.title)}  ${pc.dim(f.ruleId)}`,

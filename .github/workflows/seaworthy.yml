@@ -1,4 +1,8 @@
 # Seaworthy: pre-launch security check. https://dynamomaritime.com/seaworthy
+# This repo IS seaworthy-cli, so npx would pick the unbuilt local package: it builds and runs the source.
+# Pull requests get one comment listing only the problems they introduce (Seaworthy Pro).
+# Add your licence key as a repository secret called SEAWORTHY_LICENCE. Without it, pull
+# requests get a full scan instead.
 name: Seaworthy
 
 on:
@@ -8,11 +12,14 @@ on:
 
 permissions:
   contents: read
-  security-events: write # to show findings in the Security tab and on pull requests
 
 jobs:
-  seaworthy:
+  scan:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # to show findings in the Security tab
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,11 +28,9 @@ jobs:
       - name: Scan
         id: scan
         continue-on-error: true
-        # This repo IS seaworthy-cli, so npx would pick the unbuilt local package: build and run the source.
         run: npm ci && npm run build && node dist/cli.js --format sarif --output seaworthy.sarif
-        # Pro or Agency? Add your key as a repository secret and uncomment:
-        # env:
-        #   SEAWORTHY_LICENCE: ${{ secrets.SEAWORTHY_LICENCE }}
+        env:
+          SEAWORTHY_LICENCE: ${{ secrets.SEAWORTHY_LICENCE }}
       - name: Upload results to GitHub code scanning
         if: always() && hashFiles('seaworthy.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
@@ -33,5 +38,46 @@ jobs:
           sarif_file: seaworthy.sarif
           category: seaworthy
       - name: Fail on findings at or above the threshold
+        if: always() && steps.scan.outcome == 'failure'
+        run: exit 1
+
+  pull-request:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # to post and update the comment
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the base branch is needed to compare with
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Scan what this pull request changes
+        id: scan
+        continue-on-error: true
+        run: npm ci && npm run build && node dist/cli.js --baseline "origin/$BASE_REF" --format markdown --output seaworthy-pr.md
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          SEAWORTHY_LICENCE: ${{ secrets.SEAWORTHY_LICENCE }}
+      - name: Add the summary to this run
+        if: always() && hashFiles('seaworthy-pr.md') != ''
+        run: cat seaworthy-pr.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment on the pull request
+        if: always() && hashFiles('seaworthy-pr.md') != ''
+        continue-on-error: true # pull requests from forks get a read-only token
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = require("fs").readFileSync("seaworthy-pr.md", "utf8");
+            const marker = /<!-- seaworthy(-pr-check)? -->/;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+            const mine = comments.find((c) => c.user && c.user.type === "Bot" && marker.test(c.body || ""));
+            if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });
+      - name: Fail on new findings at or above the threshold
         if: always() && steps.scan.outcome == 'failure'
         run: exit 1

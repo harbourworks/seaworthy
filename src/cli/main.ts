@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { existsSync, statSync, writeFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, relative, resolve, sep } from "node:path";
 import pc from "picocolors";
 import { ConfigError, hasBranding, loadConfig, mergeConfig, type Config } from "../core/config.js";
 import { scan, type ScanResult } from "../core/scan.js";
@@ -9,6 +9,10 @@ import { excluder, walk } from "../core/walk.js";
 import { directDependencies } from "../deps/dependencies.js";
 import { lookupAdvisories, type OsvResult } from "../deps/osv.js";
 import { renderSarif } from "../reporters/sarif.js";
+import { renderMarkdown, type MarkdownOptions } from "../reporters/markdown.js";
+import { BaselineError, extractBaseline } from "../core/baseline.js";
+import { diffFindings } from "../pro/compare.js";
+import { prFailed, prJson, renderPrMarkdown, renderPrTerminal, type PrCheck } from "../pro/pr.js";
 import { initProject } from "./init.js";
 import { FEATURE_LABELS, TIER_INFO, hasFeature, priceLabel, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
 import { RULES, findRule } from "../rules/index.js";
@@ -47,14 +51,18 @@ const HELP = `
   ${pc.bold("Usage")}
     seaworthy [scan] [path]          Scan a project (default: current folder)
     seaworthy init [path]            Add a config file and a GitHub Actions workflow
+      --pr                           ...that comments on pull requests with only
+                                     the problems they introduce         ${pc.dim("Pro")}
     seaworthy explain <rule-id>      Explain one rule and how to fix it
     seaworthy rules                  List every rule
 
   ${pc.bold("Options")}
-    --format terminal|json|sarif|html
+    --format terminal|json|sarif|markdown|html
                                      Output format (default: terminal; sarif is for GitHub
-                                     code scanning; html is Pro)
-    --output <file>                  Where to save SARIF or HTML (default: seaworthy.sarif,
+                                     code scanning; markdown is for CI summaries and pull
+                                     request comments; html is Pro)
+    --output <file>                  Where to save SARIF, Markdown or HTML (default:
+                                     seaworthy.sarif, seaworthy-report.md,
                                      seaworthy-report.html)
     --fail-on critical|high|medium|low
                                      Exit 1 at or above this severity (default: high)
@@ -70,6 +78,8 @@ const HELP = `
     seaworthy history [path]         Scan history and trends            ${pc.dim("Pro")}
     seaworthy compare [path]         What's fixed and new between scans ${pc.dim("Pro")}
       --from <scan#> --to <scan#>    Pick two scans (default: the last two)
+    seaworthy scan --baseline <ref>  Only what's new since <ref>, e.g. a pull
+                                     request against origin/main         ${pc.dim("Pro")}
     seaworthy scan <folder> --all    Every project in a folder, one report ${pc.dim("Agency")}
     --no-history                     Don't record this scan in history
 
@@ -85,6 +95,7 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
       allowPositionals: true,
       options: {
         format: { type: "string" },
+        baseline: { type: "string" },
         output: { type: "string" },
         "fail-on": { type: "string" },
         "min-confidence": { type: "string" },
@@ -98,6 +109,7 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
         force: { type: "boolean" },
+        pr: { type: "boolean" },
       },
     });
   } catch (err) {
@@ -152,8 +164,13 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
   }
 
   const format = (values.format as string | undefined) ?? "terminal";
-  if (!["terminal", "json", "sarif", "html"].includes(format)) {
-    deps.err(pc.red(`  --format must be terminal, json, sarif or html`));
+  if (!["terminal", "json", "sarif", "markdown", "html"].includes(format)) {
+    deps.err(pc.red(`  --format must be terminal, json, sarif, markdown or html`));
+    return 2;
+  }
+  const baselineRef = values.baseline as string | undefined;
+  if (baselineRef !== undefined && values.all) {
+    deps.err(pc.red(`  --baseline compares one project, so it can't be combined with --all.`));
     return 2;
   }
 
@@ -215,6 +232,10 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
     projects = [{ dir: target, name: basename(target) }];
   }
 
+  // Without Pro this is a normal full scan, plus the one-line upsell.
+  const useBaseline = baselineRef !== undefined && allow("pr-checks", "Ran a full scan instead.");
+  let prCheck: PrCheck | null = null;
+
   const recordHistory = !values["no-history"] && hasFeature(tier, "history");
   const scanned: ReportProject[] = [];
   for (const p of projects) {
@@ -240,6 +261,15 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
       notes.push(`${label}Dependency check skipped: ${osv.reason}. The rest of the scan is complete.`);
     }
     const project = new ProjectFiles(p.dir, walk(p.dir, config.ignore).files, excluder(config.ignore));
+    if (useBaseline) {
+      try {
+        prCheck = await baselineCheck(p.dir, baselineRef!, config, result, osv, deps, notes);
+      } catch (err) {
+        if (!(err instanceof BaselineError)) throw err;
+        deps.err(pc.red(`  ${err.message}`));
+        return finish(2);
+      }
+    }
     let comparison: Comparison | null = null;
     if (recordHistory) {
       const previous = loadHistory(p.dir).scans.at(-1) ?? null;
@@ -250,14 +280,43 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
     scanned.push({ name: multi ? p.name : basename(p.dir), result, project, comparison });
   }
 
-  const failed = scanned.some((s) => s.result.failed);
+  const failed = prCheck ? prFailed(prCheck) : scanned.some((s) => s.result.failed);
 
   if (format === "json") {
-    deps.out(scanned.length === 1 && !multi ? renderJson(scanned[0]!.result, VERSION) : multiJson(scanned));
+    if (prCheck) {
+      const single = JSON.parse(renderJson(scanned[0]!.result, VERSION));
+      deps.out(JSON.stringify({ ...single, failed, ...prJson(prCheck) }, null, 2));
+    } else {
+      deps.out(scanned.length === 1 && !multi ? renderJson(scanned[0]!.result, VERSION) : multiJson(scanned));
+    }
     return finish(failed ? 1 : 0);
   }
 
-  printTerminal(scanned, multi, deps);
+  if (prCheck) {
+    const s = scanned[0]!;
+    deps.out(renderPrTerminal(s.result, s.project, prCheck, VERSION).replace(/\n$/, ""));
+    deps.out("");
+  } else {
+    printTerminal(scanned, multi, deps);
+  }
+
+  if (format === "markdown") {
+    const out = resolve(deps.cwd, (values.output as string | undefined) ?? "seaworthy-report.md");
+    // Notes and upsells go in the summary too: in CI it is what people read.
+    const mdNotes = [...notes, ...upsells].map((n) => n.replace(/\x1b\[[0-9;]*m/g, "").trim());
+    const s = scanned[0]!;
+    const link = multi ? undefined : githubLink(target, deps.env);
+    const md = prCheck
+      ? renderPrMarkdown(s.name, s.result, s.project, prCheck, VERSION, { link, notes: mdNotes })
+      : renderMarkdown(scanned.map((x) => ({ name: x.name, result: x.result, project: x.project })), VERSION, { link, notes: mdNotes });
+    try {
+      writeFileSync(out, md);
+      deps.out(`  ${pc.green("✔")} Markdown summary saved: ${pc.cyan(out)}\n`);
+    } catch (err) {
+      deps.err(pc.red(`  Couldn't write Markdown to ${out}: ${(err as Error).message}`));
+      return finish(2);
+    }
+  }
 
   if (format === "sarif") {
     const out = resolve(deps.cwd, (values.output as string | undefined) ?? "seaworthy.sarif");
@@ -289,6 +348,56 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
   return finish(failed ? 1 : 0);
 }
 
+/**
+ * Scans the base ref the same way as the working tree (with the working tree's config, so a
+ * pull request can't loosen its own check) and splits the findings into new, fixed and
+ * already there.
+ */
+async function baselineCheck(
+  dir: string,
+  ref: string,
+  config: Config,
+  head: ScanResult,
+  headOsv: OsvResult | undefined,
+  deps: CliDeps,
+  notes: string[],
+): Promise<PrCheck> {
+  const base = extractBaseline(dir, ref);
+  try {
+    const osv = await dependencyLookup(base.dir, config, deps);
+    const before = scan(base.dir, config, RULES, { osv }).findings;
+    const diff = diffFindings(before, head.findings);
+    // If OSV answered for one side only, every dependency finding would look new.
+    if (headOsv?.status === "ok" && osv?.status === "failed") {
+      const isDep = (f: { ruleId: string }) => f.ruleId === "SW-X01";
+      diff.stillPresent.push(...diff.added.filter(isDep));
+      diff.added = diff.added.filter((f) => !isDep(f));
+      notes.push(`The dependency check couldn't run on ${ref}, so dependency findings are counted as already there.`);
+    }
+    return { ref, sha: base.sha, diff, failOn: config.failOn };
+  } finally {
+    base.cleanup();
+  }
+}
+
+/**
+ * In GitHub Actions, links each finding to its line in the commit being checked. The
+ * scanned folder may be inside the repo, so its path is prefixed.
+ */
+function githubLink(target: string, env: NodeJS.ProcessEnv): MarkdownOptions["link"] {
+  const server = env.GITHUB_SERVER_URL;
+  const repo = env.GITHUB_REPOSITORY;
+  const sha = env.GITHUB_SHA;
+  const workspace = env.GITHUB_WORKSPACE;
+  if (!server || !repo || !sha || !/^[0-9a-f]{40,64}$/.test(sha) || !/^[\w.-]+\/[\w.-]+$/.test(repo) || !/^https:\/\/[\w.-]+$/.test(server)) {
+    return undefined;
+  }
+  const rel = workspace ? relative(resolve(workspace), target).split(sep).join("/") : "";
+  if (rel.startsWith("..")) return undefined;
+  const prefix = rel ? `${rel}/` : "";
+  return (file, line) => `${server}/${repo}/blob/${sha}/${(prefix + file).split("/").map(encodeURIComponent).join("/")}#L${line}`;
+}
+
 /** Fetches known vulnerabilities for a project's dependencies, unless offline or SW-X01 is off. */
 async function dependencyLookup(dir: string, config: Config, deps: CliDeps): Promise<OsvResult | undefined> {
   if (config.rules["SW-X01"] === "off") return undefined;
@@ -302,12 +411,22 @@ async function dependencyLookup(dir: string, config: Config, deps: CliDeps): Pro
 function init(path: string | undefined, ctx: Ctx): number {
   const { deps, values } = ctx;
   const dir = resolve(deps.cwd, path ?? ".");
-  const { created, skipped } = initProject(dir, Boolean(values.force));
+  const pr = Boolean(values.pr);
+  const { created, skipped } = initProject(dir, Boolean(values.force), { pr });
   deps.out("");
   for (const f of created) deps.out(`  ${pc.green("✔")} Created ${f}`);
   for (const f of skipped) deps.out(`  ${pc.dim("•")} ${f} already exists, left as it is ${pc.dim("(--force to replace)")}`);
   deps.out("");
   deps.out(`  ${pc.bold("Next")}`);
+  if (pr) {
+    deps.out(`    1. Add your licence key as a repository secret called SEAWORTHY_LICENCE`);
+    deps.out(`       (Settings → Secrets and variables → Actions). Without it, pull requests get a full scan.`);
+    deps.out(`    2. Commit both files. Each pull request then gets one comment, updated on every push,`);
+    deps.out(`       with only the problems it introduces. Pushes to main go to the Security tab.`);
+    deps.out(`    3. Tune what fails the build in seaworthy.config.json (failOn, rules, ignore).`);
+    deps.out("");
+    return 0;
+  }
   deps.out(`    1. Commit both files. Every pull request and push to main is then scanned.`);
   deps.out(`    2. Findings appear in the Security tab and on pull requests (free on public repos;`);
   deps.out(`       private repos need GitHub code scanning enabled).`);

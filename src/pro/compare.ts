@@ -18,30 +18,7 @@ export interface Comparison {
  * file has several findings for one rule, they are paired in line order.
  */
 export function compareScans(before: HistoryScan, after: HistoryScan): Comparison {
-  const group = (fs: HistoryFinding[]) => {
-    const m = new Map<string, HistoryFinding[]>();
-    for (const f of fs) {
-      const k = `${f.rule}\u0000${f.file}`;
-      m.set(k, [...(m.get(k) ?? []), f]);
-    }
-    for (const list of m.values()) list.sort((a, b) => a.line - b.line);
-    return m;
-  };
-  const b = group(before.findings);
-  const a = group(after.findings);
-  const stillPresent: HistoryFinding[] = [];
-  const fixed: HistoryFinding[] = [];
-  const added: HistoryFinding[] = [];
-
-  for (const key of new Set([...b.keys(), ...a.keys()])) {
-    const was = b.get(key) ?? [];
-    const now = a.get(key) ?? [];
-    const both = Math.min(was.length, now.length);
-    stillPresent.push(...now.slice(0, both));
-    fixed.push(...was.slice(both));
-    added.push(...now.slice(both));
-  }
-
+  const { stillPresent, fixed, added } = pair(before.findings, after.findings, (f) => `${f.rule}\u0000${f.file}`);
   const order = (fs: HistoryFinding[]) => fs.sort((x, y) => compareFindings(asFinding(x), asFinding(y)));
   return {
     before: { id: before.id, timestamp: before.timestamp },
@@ -50,6 +27,47 @@ export function compareScans(before: HistoryScan, after: HistoryScan): Compariso
     fixed: order(fixed),
     added: order(added),
   };
+}
+
+export interface FindingDiff {
+  /** Only in the later scan: what a pull request introduces. */
+  added: Finding[];
+  /** In the earlier scan, gone from the later one. */
+  fixed: Finding[];
+  /** In both (the later scan's copy, so lines are current). */
+  stillPresent: Finding[];
+}
+
+/** The same matching as compareScans, on full findings (pull-request checks keep the detail). */
+export function diffFindings(before: Finding[], after: Finding[]): FindingDiff {
+  const { stillPresent, fixed, added } = pair(before, after, (f) => `${f.ruleId}\u0000${f.file}`);
+  return { added: added.sort(compareFindings), fixed: fixed.sort(compareFindings), stillPresent: stillPresent.sort(compareFindings) };
+}
+
+function pair<T extends { line: number }>(before: T[], after: T[], key: (f: T) => string) {
+  const group = (fs: T[]) => {
+    const m = new Map<string, T[]>();
+    for (const f of fs) {
+      const k = key(f);
+      m.set(k, [...(m.get(k) ?? []), f]);
+    }
+    for (const list of m.values()) list.sort((a, b) => a.line - b.line);
+    return m;
+  };
+  const b = group(before);
+  const a = group(after);
+  const stillPresent: T[] = [];
+  const fixed: T[] = [];
+  const added: T[] = [];
+  for (const k of new Set([...b.keys(), ...a.keys()])) {
+    const was = b.get(k) ?? [];
+    const now = a.get(k) ?? [];
+    const both = Math.min(was.length, now.length);
+    stillPresent.push(...now.slice(0, both));
+    fixed.push(...was.slice(both));
+    added.push(...now.slice(both));
+  }
+  return { stillPresent, fixed, added };
 }
 
 /** Turns live findings into the metadata-only shape history uses. */

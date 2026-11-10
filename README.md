@@ -47,6 +47,8 @@ npx seaworthy-cli init
 
 This adds `seaworthy.config.json` and `.github/workflows/seaworthy.yml`. Commit both, and every pull request and push to `main` is scanned: findings appear in the repo's Security tab and as annotations on pull requests (SARIF, via GitHub code scanning), and the check fails on high or critical findings. Code scanning is free on public repos; private repos need it enabled.
 
+**Pull-request checks (Pro):** `npx seaworthy-cli init --pr` writes a workflow that scans each pull request against its base branch and posts one comment, updated on every push, with only the problems the pull request introduces in full, the ones it fixes listed, and the ones already there counted. The check fails only on new findings at or above your threshold. Add your licence key as a repository secret called `SEAWORTHY_LICENCE`; without one, pull requests get a full scan. The same comparison runs locally with `seaworthy --baseline origin/main`.
+
 ## Usage
 
 ```
@@ -54,6 +56,7 @@ npx seaworthy-cli                        # scan the current folder
 npx seaworthy-cli path/to/app            # scan another folder
 npx seaworthy-cli --format json          # machine-readable output
 npx seaworthy-cli --format sarif         # SARIF for GitHub code scanning (seaworthy.sarif)
+npx seaworthy-cli --format markdown      # Markdown for CI summaries and comments (seaworthy-report.md)
 npx seaworthy-cli --fail-on critical     # only fail on critical findings
 npx seaworthy-cli --offline              # make no network calls at all
 ```
@@ -77,7 +80,7 @@ Seaworthy reads your files locally and never sends code, findings or file names 
 
 ## Plans
 
-Every check is free. **Pro** (£12 a month or £99 a year) adds a self-contained HTML report, scan history and before/after comparison. **Agency** (£349 a year) adds white-label reports and scanning every project in a folder. Paid features never block a scan. See [dynamomaritime.com/seaworthy](https://dynamomaritime.com/seaworthy).
+Every check is free. **Pro** (£12 a month or £99 a year) adds pull-request checks that show only new problems, a self-contained HTML report, scan history and before/after comparison. **Agency** (£349 a year) adds white-label reports and scanning every project in a folder. Paid features never block a scan. See [dynamomaritime.com/seaworthy](https://dynamomaritime.com/seaworthy).
 
 ```
 seaworthy login <licence-key>     # your key is in the Polar customer portal
