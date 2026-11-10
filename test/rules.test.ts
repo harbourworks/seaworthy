@@ -28,9 +28,10 @@ describe("notes-saas fixture", () => {
   const r = scan(join(FIXTURES, "notes-saas"), DEFAULT_CONFIG, RULES);
 
   it("finds exactly the planted secret and Supabase flaws", () => {
-    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12])/.test(s))).toEqual([
+    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01)/.test(s))).toEqual([
       "SW-D01 supabase/migrations/0001_init.sql:20",
       "SW-D02 supabase/migrations/0001_init.sql:18",
+      "SW-P01 app/api/webhooks/stripe/route.ts:5",
       "SW-S01 .env:3",
       "SW-S01 .env:4",
       "SW-S01 .env:5",
@@ -655,5 +656,71 @@ describe("SW-D03 and SW-D04 Firebase rules open to everyone", () => {
         ),
       }).all,
     ).toEqual([]);
+  });
+});
+
+describe("SW-P01 Stripe webhook without signature check", () => {
+  const stripeDeps = { "package.json": JSON.stringify({ dependencies: { stripe: "14.0.0" } }) };
+  const run = (files: Record<string, string>) => {
+    const p = project({ ...stripeDeps, ...files });
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    return all.findings.filter((f) => f.ruleId === "SW-P01").map((f) => `${f.file}:${f.line} ${f.confidence}`).sort();
+  };
+  const unverified =
+    "export async function POST(req: Request) {\n  const event = await req.json();\n" +
+    '  if (event.type === "invoice.paid") { await markPaid(event.data.object.customer); }\n  return new Response("ok");\n}\n';
+
+  it("vulnerable: trusts the parsed body", () => {
+    expect(run({ "app/api/stripe-webhook/route.ts": unverified })).toEqual(["app/api/stripe-webhook/route.ts:2 high"]);
+  });
+  it("vulnerable: Express handler using req.body", () => {
+    expect(
+      run({
+        "server/hooks.js":
+          "app.post('/hooks/stripe', (req, res) => {\n  const event = req.body;\n" +
+          "  switch (event.type) { case 'customer.subscription.deleted': downgrade(event); }\n  res.sendStatus(200);\n});\n",
+      }),
+    ).toEqual(["server/hooks.js:2 high"]);
+  });
+  it("fixed: constructEvent, in the handler or in a helper it imports", () => {
+    expect(
+      run({
+        "app/api/stripe-webhook/route.ts":
+          'import { stripe } from "@/lib/stripe";\nexport async function POST(req: Request) {\n' +
+          '  const event = stripe.webhooks.constructEvent(await req.text(), req.headers.get("stripe-signature")!, process.env.STRIPE_WEBHOOK_SECRET!);\n' +
+          '  if (event.type === "invoice.paid") {}\n}\n',
+      }),
+    ).toEqual([]);
+    expect(
+      run({
+        "lib/verify.ts": "export const verify = (b: string, s: string) => stripe.webhooks.constructEvent(b, s, secret);\n",
+        "app/api/stripe-webhook/route.ts":
+          'import { verify } from "@/lib/verify";\nexport async function POST(req: Request) {\n' +
+          '  const event = verify(await req.text(), req.headers.get("stripe-signature")!);\n  if (event.type === "invoice.paid") {}\n}\n',
+      }),
+    ).toEqual([]);
+  });
+  it("fixed: fetching the event back from Stripe also proves it", () => {
+    expect(
+      run({
+        "app/api/stripe-webhook/route.ts":
+          "export async function POST(req: Request) {\n  const { id } = await req.json();\n" +
+          '  const event = await stripe.events.retrieve(id);\n  if (event.type === "invoice.paid") {}\n}\n',
+      }),
+    ).toEqual([]);
+  });
+  it("is not fooled by translation keys or JSON.parse elsewhere", () => {
+    expect(
+      run({
+        "app/billing/page.tsx": 'const labels = JSON.parse(raw);\nexport default () => t("invoice.total") + t("product.name");\n',
+      }),
+    ).toEqual([]);
+  });
+  it("does not run without Stripe", () => {
+    const p = project({ "app/api/stripe-webhook/route.ts": unverified });
+    const r = scan(p.root, DEFAULT_CONFIG, RULES);
+    p.done();
+    expect(r.rulesRun).not.toContain("SW-P01");
   });
 });

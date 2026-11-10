@@ -7,6 +7,11 @@ import { MockProvider } from "../src/licensing/mock.js";
 import { PURCHASE_URL } from "../src/licensing/config.js";
 import { DISCLAIMER } from "../src/pro/html.js";
 import { RULES } from "../src/rules/index.js";
+import { scan } from "../src/core/scan.js";
+import { DEFAULT_CONFIG } from "../src/core/config.js";
+
+/** How many findings a plain scan of a copied test app shows, so counts follow the rules as they grow. */
+const findingCount = (dir: string) => scan(dir, DEFAULT_CONFIG, RULES).findings.length;
 
 const FIXTURES = resolve(__dirname, "../fixtures/apps");
 const PRO_KEY = "SEAWORTHY-TEST-PRO-0001";
@@ -145,7 +150,7 @@ describe("Pro", () => {
     expect(await c.run(join(apps, "notes-saas"), "--format", "html")).toBe(1);
     const html = readFileSync(join(work, "seaworthy-report.html"), "utf8");
     expect(html).toContain(DISCLAIMER);
-    expect(html).toContain("Seaworthy found 11 problems in notes-saas");
+    expect(html).toContain(`Seaworthy found ${findingCount(join(apps, "notes-saas"))} problems in notes-saas`);
     expect(html).toMatch(/<span class="brand-name">Seaworthy<\/span>/);
     // No external resources of any kind.
     expect(html).not.toMatch(/<script|<link|src="http|href="http|url\(/i);
@@ -165,13 +170,14 @@ describe("Pro", () => {
     await asPro();
     const apps = copyApps();
     const app = join(apps, "notes-saas");
+    const before = findingCount(app);
     await cli().run(app);
     // Fix one finding: turn on RLS for payments.
     writeFileSync(join(app, "supabase", "migrations", "0002_rls.sql"), "alter table public.payments enable row level security;\n");
     clock = new Date("2026-11-11T09:00:00Z");
     const second = cli();
     await second.run(app);
-    expect(second.all()).toMatch(/Since scan #1 \(2026-11-10\): 1 fixed, 0 new, 10 still open/);
+    expect(second.all()).toContain(`Since scan #1 (2026-11-10): 1 fixed, 0 new, ${before - 1} still open`);
 
     const raw = readFileSync(join(app, ".seaworthy", "history.json"), "utf8");
     const history = JSON.parse(raw);
@@ -185,7 +191,7 @@ describe("Pro", () => {
     const h = cli();
     expect(await h.run("history", app)).toBe(0);
     expect(h.all()).toMatch(/#1.*\n.*#2/);
-    expect(h.all()).toContain("11 → 10 findings, down 1");
+    expect(h.all()).toContain(`${before} → ${before - 1} findings, down 1`);
 
     const cmp = cli();
     expect(await cmp.run("compare", app)).toBe(0);

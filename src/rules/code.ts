@@ -98,3 +98,55 @@ export function envRefs(file: string, text: string): Ref[] {
 export function mentionsEnv(text: string): boolean {
   return /(?:process\.env|import\.meta\.env|\$env\/)/.test(text);
 }
+
+const RESOLVE_EXTS = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
+
+/**
+ * Resolves a local import (`./x`, `../x`, `@/x`, `~/x`) to a scanned file, or null for
+ * packages and anything not found. `@/` and `~/` are tried at the root and under `src/`,
+ * which covers the Next.js, Vite and Nuxt defaults without reading tsconfig.
+ */
+export function resolveImport(project: ProjectFiles, fromFile: string, spec: string): string | null {
+  const files = new Set(project.files);
+  const dir = fromFile.includes("/") ? fromFile.slice(0, fromFile.lastIndexOf("/")) : "";
+  let bases: string[];
+  if (spec.startsWith("./") || spec.startsWith("../")) bases = [normalise(dir ? `${dir}/${spec}` : spec)];
+  else if (spec.startsWith("@/") || spec.startsWith("~/")) bases = [spec.slice(2), `src/${spec.slice(2)}`];
+  else return null;
+  for (const base of bases) {
+    const stem = base.replace(/\.(js|jsx|mjs|cjs)$/, ""); // TS projects import "./x.js" for "./x.ts"
+    for (const ext of RESOLVE_EXTS) {
+      for (const b of [base, stem]) if (files.has(b + ext)) return b + ext;
+    }
+  }
+  return null;
+}
+
+function normalise(p: string): string {
+  const out: string[] = [];
+  for (const part of p.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return out.join("/");
+}
+
+/** Module specifiers a file imports (static imports, re-exports, require and dynamic import). */
+export function importsOf(file: string, text: string): string[] {
+  const out: string[] = [];
+  const ast = astOf(file, text);
+  if (ast) {
+    walkAst(ast, (n) => {
+      if ((n.type === "ImportDeclaration" || n.type === "ExportNamedDeclaration" || n.type === "ExportAllDeclaration") && n.source) {
+        out.push(n.source.value);
+      } else if (n.type === "CallExpression" && n.arguments[0]?.type === "StringLiteral") {
+        const c = n.callee;
+        if (c.type === "Import" || (c.type === "Identifier" && c.name === "require")) out.push(n.arguments[0].value);
+      }
+    });
+    return out;
+  }
+  for (const m of text.matchAll(/\b(?:from|import|require\s*\()\s*["']([^"']+)["']/g)) out.push(m[1]!);
+  return out;
+}
