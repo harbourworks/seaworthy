@@ -28,6 +28,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 | [SW-L03](#sw-l03) | Agent tool with shell, file or code access and no guard | high | Any project |
 | [SW-L04](#sw-l04) | MCP server config with secrets in plain text or no authentication | high | MCP |
 | [SW-X01](#sw-x01) | Dependency with known vulnerabilities | high | Any project |
+| [SW-X02](#sw-x02) | Dependency that isn't on npm, or is brand new | high | Any project |
 | [SW-B01](#sw-b01) | Missing security headers | low | Next.js |
 
 ## SW-S01
@@ -189,6 +190,14 @@ MCP config files tell your AI coding tool which servers to start and connect to.
 Checks your direct dependencies, at the exact versions in your lockfile, against OSV (osv.dev), the open vulnerability database. Only package names and versions are sent; use --offline to skip it. Severity follows the advisory's own rating. Development-only dependencies aren't checked.
 
 **Checks:** Direct dependencies, at the versions in your lockfile, checked against OSV (osv.dev). Sends only package names and versions; needs a connection and is skipped with `--offline`.
+
+## SW-X02
+
+**Dependency that isn't on npm, or is brand new** · high · runs on: Any project
+
+AI coding tools sometimes invent package names that sound right but don't exist. Attackers watch for those names and register them ("slopsquatting"), so the next install runs their code on your machine and in CI. Seaworthy checks each dependency name against the public npm registry, sending only the names, as npm itself would. Packages first published in the last few weeks are flagged at medium confidence, because a new package is sometimes fine and sometimes a fresh squat. Use --offline to skip it.
+
+**Checks:** Every dependency and devDependency name in package.json, checked on the public npm registry (names only, as npm install would). Not on npm: high. First published in the last 30 days: medium, at medium confidence. Private-registry packages (.npmrc) and the project's own workspace packages are skipped; needs a connection and is skipped with `--offline`.
 
 ## SW-B01
 

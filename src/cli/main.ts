@@ -8,7 +8,7 @@ import type { Finding } from "../core/finding.js";
 import { ProjectFiles } from "../core/project.js";
 import { excluder, walk } from "../core/walk.js";
 import type { OsvResult } from "../deps/osv.js";
-import { dependencyLookup } from "../deps/lookup.js";
+import { onlineLookups } from "../deps/lookup.js";
 import { renderSarif } from "../reporters/sarif.js";
 import { renderMarkdown, type MarkdownOptions } from "../reporters/markdown.js";
 import { BaselineError, extractBaseline } from "../core/baseline.js";
@@ -305,8 +305,8 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
       }
       throw err;
     }
-    const osv = await dependencyLookup(p.dir, config, deps.fetch);
-    const result = scan(p.dir, config, RULES, { osv });
+    const { osv, npm } = await onlineLookups(p.dir, config, deps.fetch);
+    const result = scan(p.dir, config, RULES, { osv, npm });
     const label = multi ? `${p.name}: ` : "";
     if (osv?.status === "ok" && osv.checked > 0) {
       notes.push(`${label}Checked ${osv.checked} ${osv.checked === 1 ? "dependency" : "dependencies"} against OSV (osv.dev). Only package names and versions were sent.`);
@@ -314,6 +314,11 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
       notes.push(`${label}Dependency check skipped (offline).`);
     } else if (osv?.status === "failed") {
       notes.push(`${label}Dependency check skipped: ${osv.reason}. The rest of the scan is complete.`);
+    }
+    if (npm?.status === "ok" && npm.checked > 0) {
+      notes.push(`${label}Checked ${npm.checked} package ${npm.checked === 1 ? "name" : "names"} on the npm registry, as npm install would.`);
+    } else if (npm?.status === "failed") {
+      notes.push(`${label}Package-name check skipped: ${npm.reason}.`);
     }
     const project = new ProjectFiles(p.dir, walk(p.dir, config.ignore).files, excluder(config.ignore));
     if (useBaseline) {
@@ -445,8 +450,8 @@ async function baselineCheck(
 ): Promise<PrCheck> {
   const base = extractBaseline(dir, ref);
   try {
-    const osv = await dependencyLookup(base.dir, config, deps.fetch);
-    const before = scan(base.dir, config, RULES, { osv }).findings;
+    const { osv, npm } = await onlineLookups(base.dir, config, deps.fetch);
+    const before = scan(base.dir, config, RULES, { osv, npm }).findings;
     const diff = diffFindings(before, head.findings);
     // If OSV answered for one side only, every dependency finding would look new.
     if (headOsv?.status === "ok" && osv?.status === "failed") {

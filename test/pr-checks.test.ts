@@ -21,6 +21,8 @@ let provider: MockProvider;
 
 /** OSV with no known vulnerabilities, so these tests never touch the network. */
 const quietOsv = (async (url: string, init?: RequestInit) => {
+  // The npm registry: every package exists and is long established.
+  if (url.startsWith("https://registry.npmjs.org/")) return new Response(JSON.stringify({ versions: { "1.0.0": {}, "1.1.0": {} }, modified: "2020-01-01T00:00:00Z" }));
   if (!url.endsWith("/querybatch")) return new Response("{}", { status: 404 });
   const { queries } = JSON.parse(String(init!.body)) as { queries: unknown[] };
   return new Response(JSON.stringify({ results: queries.map(() => ({})) }));

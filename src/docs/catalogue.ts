@@ -32,6 +32,7 @@ export const COVERAGE: Record<string, string> = {
   "SW-L03": "Agent tools whose model-chosen arguments reach shell commands, file deletes or writes, or `eval`, with no allow-list or confirmation step.",
   "SW-L04": "MCP configs (`.cursor/mcp.json`, `.mcp.json`, `.vscode/mcp.json`, `claude_desktop_config.json`, Windsurf) with secrets written in, or remote servers over plain HTTP or with no auth header.",
   "SW-X01": "Direct dependencies, at the versions in your lockfile, checked against OSV (osv.dev). Sends only package names and versions; needs a connection and is skipped with `--offline`.",
+  "SW-X02": "Every dependency and devDependency name in package.json, checked on the public npm registry (names only, as npm install would). Not on npm: high. First published in the last 30 days: medium, at medium confidence. Private-registry packages (.npmrc) and the project's own workspace packages are skipped; needs a connection and is skipped with `--offline`.",
   "SW-B01": "Next.js projects only. Looks for Content-Security-Policy, frame protection and HSTS in next.config, middleware, host config (vercel.json, netlify.toml, _headers, firebase.json) and nginx, Caddy, Apache or Traefik config.",
 };
 
