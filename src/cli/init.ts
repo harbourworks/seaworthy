@@ -18,8 +18,8 @@ jobs:
   seaworthy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Scan
@@ -67,8 +67,8 @@ jobs:
       contents: read
       security-events: write # to show findings in the Security tab
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Scan
@@ -94,10 +94,10 @@ jobs:
       contents: read
       pull-requests: write # to post and update the comment
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # the base branch is needed to compare with
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Scan what this pull request changes
@@ -113,7 +113,7 @@ jobs:
       - name: Comment on the pull request
         if: always() && hashFiles('seaworthy-pr.md') != ''
         continue-on-error: true # pull requests from forks get a read-only token
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const body = require("fs").readFileSync("seaworthy-pr.md", "utf8");
