@@ -28,7 +28,7 @@ describe("notes-saas fixture", () => {
   const r = scan(join(FIXTURES, "notes-saas"), DEFAULT_CONFIG, RULES);
 
   it("finds exactly the planted secret and Supabase flaws", () => {
-    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01|B01|A0[125])/.test(s))).toEqual([
+    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P0[12]|B01|A0[125])/.test(s))).toEqual([
       "SW-A01 app/api/notes/[id]/route.ts:21",
       "SW-A02 app/api/notes/[id]/route.ts:14",
       "SW-A05 app/api/search/route.ts:13",
@@ -36,6 +36,7 @@ describe("notes-saas fixture", () => {
       "SW-D01 supabase/migrations/0001_init.sql:20",
       "SW-D02 supabase/migrations/0001_init.sql:18",
       "SW-P01 app/api/webhooks/stripe/route.ts:5",
+      "SW-P02 app/api/checkout/route.ts:20",
       "SW-S01 .env:3",
       "SW-S01 .env:4",
       "SW-S01 .env:5",
@@ -1087,5 +1088,49 @@ describe("SW-A02 record fetched by ID with no ownership check", () => {
   });
   it("ignores IDs that don't come from the request", () => {
     expect(run({ "app/api/me/route.ts": route("await supabaseAdmin.from('profiles').select().eq('id', user.id).single();") }).all).toEqual([]);
+  });
+});
+
+describe("SW-P02 price or amount taken from the client", () => {
+  const stripeDeps = { "package.json": JSON.stringify({ dependencies: { stripe: "14.0.0" } }) };
+  const run = (files: Record<string, string>) => {
+    const p = project({ ...stripeDeps, ...files });
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-P02");
+    return { all: mine.map((f) => `${f.file}:${f.line} ${f.confidence}`).sort(), titles: mine.map((f) => f.title).sort() };
+  };
+  const handler = (body: string) => `export async function POST(req: Request) {\n${body}\n}\n`;
+
+  it("vulnerable: amounts, discounts and fees from the request", () => {
+    const r = run({
+      "app/api/a/route.ts": handler(
+        "  const { amount } = await req.json();\n  await stripe.paymentIntents.create({ amount: Math.round(Number(amount) * 100), currency: 'gbp' });",
+      ),
+      "app/api/b/route.ts": handler(
+        "  const body = await req.json();\n  await stripe.coupons.create({ percent_off: body.discount, duration: 'once' });",
+      ),
+      "app/actions.ts": "'use server';\nexport async function buy(total: number) {\n  await stripe.checkout.sessions.create({ line_items: [{ price_data: { unit_amount: total } }] });\n}\n",
+    });
+    expect(r.all).toEqual(["app/actions.ts:3 high", "app/api/a/route.ts:3 high", "app/api/b/route.ts:3 high"]);
+  });
+  it("a client-chosen price ID is medium", () => {
+    expect(
+      run({
+        "app/api/c/route.ts": handler("  const { priceId } = await req.json();\n  await stripe.checkout.sessions.create({ line_items: [{ price: priceId, quantity: 1 }] });"),
+      }).titles,
+    ).toEqual(["Stripe price is chosen by the client"]);
+  });
+  it("fixed: the server picks the price, and the client only names a plan", () => {
+    expect(
+      run({
+        "app/api/d/route.ts": handler(
+          "  const PRICES = { pro: 'price_1Pro', team: 'price_1Team' };\n  const { plan, quantity } = await req.json();\n" +
+            "  const price = PRICES[plan];\n  if (!price) return new Response(null, { status: 400 });\n" +
+            "  await stripe.checkout.sessions.create({ line_items: [{ price, quantity }], client_reference_id: plan });",
+        ),
+        "app/api/e/route.ts": handler("  await stripe.paymentIntents.create({ amount: 9900, currency: 'gbp' });"),
+      }).all,
+    ).toEqual([]);
   });
 });

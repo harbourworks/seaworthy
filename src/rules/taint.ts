@@ -88,6 +88,8 @@ export function analyseTaint(ast: Node, text: string, opts: TaintOptions): Taint
       if (x.type === "Identifier" && tainted.has(x.name)) hit = true;
       // A sanitiser call inside the expression cleans what it wraps.
       if (x.type === "CallExpression" && opts.sanitiser?.test(calleeText(x, src))) return false;
+      // TABLE[key] with a table you wrote can only return your own values, whatever the key.
+      if (x.type === "MemberExpression" && x.computed && !exprTainted(x.object as Node)) return false;
     });
     return hit;
   };
