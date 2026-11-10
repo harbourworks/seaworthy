@@ -47,3 +47,15 @@ describe("rule docs are built from the rules", () => {
     expect(llmsTxt()).toMatch(/- \[Rules\]\(https:\/\/dynamomaritime\.com\/seaworthy\/docs\)/);
   });
 });
+
+describe("MCP Registry metadata", () => {
+  it("server.json matches package.json (name, version, package)", () => {
+    const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf8"));
+    const server = JSON.parse(readFileSync(resolve(__dirname, "../server.json"), "utf8"));
+    expect(server.name).toBe(pkg.mcpName);
+    expect(server.version).toBe(pkg.version);
+    expect(server.packages[0]).toMatchObject({ registryType: "npm", identifier: pkg.name, version: pkg.version, transport: { type: "stdio" } });
+    expect(server.packages[0].packageArguments).toEqual([{ type: "positional", value: "mcp" }]);
+    expect(server.description.length).toBeLessThanOrEqual(100);
+  });
+});
