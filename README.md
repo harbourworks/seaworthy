@@ -39,12 +39,21 @@ No account, no install, no upload. Node 20 or later.
 
 Checks run only when they apply to your stack: Next.js, React, Vue, Svelte, Supabase, Firebase, Stripe and the main LLM SDKs. They read what your code does, not just words in it, and are tuned for few false alarms. `seaworthy rules` lists them all and `seaworthy explain SW-D01` explains one.
 
+## In CI (GitHub Actions)
+
+```
+npx seaworthy-cli init
+```
+
+This adds `seaworthy.config.json` and `.github/workflows/seaworthy.yml`. Commit both, and every pull request and push to `main` is scanned: findings appear in the repo's Security tab and as annotations on pull requests (SARIF, via GitHub code scanning), and the check fails on high or critical findings. Code scanning is free on public repos; private repos need it enabled.
+
 ## Usage
 
 ```
 npx seaworthy-cli                        # scan the current folder
 npx seaworthy-cli path/to/app            # scan another folder
 npx seaworthy-cli --format json          # machine-readable output
+npx seaworthy-cli --format sarif         # SARIF for GitHub code scanning (seaworthy.sarif)
 npx seaworthy-cli --fail-on critical     # only fail on critical findings
 npx seaworthy-cli --offline              # make no network calls at all
 ```

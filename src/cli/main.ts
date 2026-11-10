@@ -8,6 +8,8 @@ import { ProjectFiles } from "../core/project.js";
 import { excluder, walk } from "../core/walk.js";
 import { directDependencies } from "../deps/dependencies.js";
 import { lookupAdvisories, type OsvResult } from "../deps/osv.js";
+import { renderSarif } from "../reporters/sarif.js";
+import { initProject } from "./init.js";
 import { FEATURE_LABELS, TIER_INFO, hasFeature, priceLabel, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
 import { RULES, findRule } from "../rules/index.js";
 import { renderTerminal } from "../reporters/terminal.js";
@@ -37,19 +39,23 @@ export interface CliDeps {
   fetch?: typeof fetch;
 }
 
-const COMMANDS = new Set(["scan", "explain", "rules", "login", "logout", "status", "history", "compare"]);
+const COMMANDS = new Set(["scan", "init", "explain", "rules", "login", "logout", "status", "history", "compare"]);
 
 const HELP = `
   ${pc.bold("seaworthy")}: pre-launch security check for AI-built apps. Runs locally.
 
   ${pc.bold("Usage")}
     seaworthy [scan] [path]          Scan a project (default: current folder)
+    seaworthy init [path]            Add a config file and a GitHub Actions workflow
     seaworthy explain <rule-id>      Explain one rule and how to fix it
     seaworthy rules                  List every rule
 
   ${pc.bold("Options")}
-    --format terminal|json|html      Output format (default: terminal; html is Pro)
-    --output <file>                  Where to save the HTML report (default: seaworthy-report.html)
+    --format terminal|json|sarif|html
+                                     Output format (default: terminal; sarif is for GitHub
+                                     code scanning; html is Pro)
+    --output <file>                  Where to save SARIF or HTML (default: seaworthy.sarif,
+                                     seaworthy-report.html)
     --fail-on critical|high|medium|low
                                      Exit 1 at or above this severity (default: high)
     --min-confidence high|medium|low Hide findings below this confidence (default: high)
@@ -91,6 +97,7 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
         to: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
+        force: { type: "boolean" },
       },
     });
   } catch (err) {
@@ -114,6 +121,8 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
       return explain(args[0], deps);
     case "rules":
       return listRules(deps);
+    case "init":
+      return init(args[0], ctx);
     case "login":
       return login(args[0], ctx);
     case "logout":
@@ -143,8 +152,8 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
   }
 
   const format = (values.format as string | undefined) ?? "terminal";
-  if (!["terminal", "json", "html"].includes(format)) {
-    deps.err(pc.red(`  --format must be terminal, json or html`));
+  if (!["terminal", "json", "sarif", "html"].includes(format)) {
+    deps.err(pc.red(`  --format must be terminal, json, sarif or html`));
     return 2;
   }
 
@@ -250,6 +259,17 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
 
   printTerminal(scanned, multi, deps);
 
+  if (format === "sarif") {
+    const out = resolve(deps.cwd, (values.output as string | undefined) ?? "seaworthy.sarif");
+    try {
+      writeFileSync(out, renderSarif(scanned.map((s) => ({ prefix: multi ? s.name : "", result: s.result })), VERSION));
+      deps.out(`  ${pc.green("✔")} SARIF saved: ${pc.cyan(out)}\n`);
+    } catch (err) {
+      deps.err(pc.red(`  Couldn't write SARIF to ${out}: ${(err as Error).message}`));
+      return finish(2);
+    }
+  }
+
   if (format === "html" && allow("html-report", "Showing terminal output instead.")) {
     let branding = SEAWORTHY_BRANDING;
     if (hasBranding(topConfig.report) && allow("white-label", "This report uses Seaworthy branding instead.")) {
@@ -277,6 +297,23 @@ async function dependencyLookup(dir: string, config: Config, deps: CliDeps): Pro
   const list = directDependencies(project);
   if (list.length === 0) return undefined;
   return lookupAdvisories(list, deps.fetch ?? fetch);
+}
+
+function init(path: string | undefined, ctx: Ctx): number {
+  const { deps, values } = ctx;
+  const dir = resolve(deps.cwd, path ?? ".");
+  const { created, skipped } = initProject(dir, Boolean(values.force));
+  deps.out("");
+  for (const f of created) deps.out(`  ${pc.green("✔")} Created ${f}`);
+  for (const f of skipped) deps.out(`  ${pc.dim("•")} ${f} already exists, left as it is ${pc.dim("(--force to replace)")}`);
+  deps.out("");
+  deps.out(`  ${pc.bold("Next")}`);
+  deps.out(`    1. Commit both files. Every pull request and push to main is then scanned.`);
+  deps.out(`    2. Findings appear in the Security tab and on pull requests (free on public repos;`);
+  deps.out(`       private repos need GitHub code scanning enabled).`);
+  deps.out(`    3. Tune what fails the build in seaworthy.config.json (failOn, rules, ignore).`);
+  deps.out("");
+  return 0;
 }
 
 function printTerminal(scanned: ReportProject[], multi: boolean, deps: CliDeps) {

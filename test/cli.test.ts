@@ -297,3 +297,38 @@ describe("dependency check notes", () => {
     expect(code).toBe(1); // the scan still ran and found the planted flaws
   });
 });
+
+describe("init and SARIF", () => {
+  it("init writes a config and a workflow, and never overwrites without --force", async () => {
+    const dir = join(work, "fresh");
+    mkdirSync(dir);
+    expect(await cli().run("init", dir)).toBe(0);
+    const wf = readFileSync(join(dir, ".github", "workflows", "seaworthy.yml"), "utf8");
+    expect(wf).toContain("npx --yes seaworthy-cli@0 --format sarif --output seaworthy.sarif");
+    expect(wf).toContain("github/codeql-action/upload-sarif@v3");
+    expect(wf).toContain("security-events: write");
+    expect(JSON.parse(readFileSync(join(dir, "seaworthy.config.json"), "utf8"))).toMatchObject({ failOn: "high" });
+
+    writeFileSync(join(dir, "seaworthy.config.json"), '{ "failOn": "critical" }');
+    const again = cli();
+    await again.run("init", dir);
+    expect(again.all()).toContain("seaworthy.config.json already exists");
+    expect(readFileSync(join(dir, "seaworthy.config.json"), "utf8")).toContain("critical");
+    await cli().run("init", dir, "--force");
+    expect(readFileSync(join(dir, "seaworthy.config.json"), "utf8")).toContain('"high"');
+  });
+
+  it("--format sarif writes valid SARIF with no secret values, and keeps the exit code", async () => {
+    const apps = copyApps();
+    const c = cli();
+    expect(await c.run(join(apps, "notes-saas"), "--format", "sarif", "--offline")).toBe(1);
+    const text = readFileSync(join(work, "seaworthy.sarif"), "utf8");
+    const sarif = JSON.parse(text);
+    expect(sarif.version).toBe("2.1.0");
+    const results = sarif.runs[0].results as Array<{ ruleId: string; locations: Array<{ physicalLocation: { artifactLocation: { uri: string }; region: { startLine: number } } }> }>;
+    expect(results.some((r) => r.ruleId === "SW-D01" && r.locations[0]!.physicalLocation.region.startLine === 20)).toBe(true);
+    const env = readFileSync(join(apps, "notes-saas", ".env"), "utf8");
+    for (const m of env.matchAll(/=(\S{20,})$/gm)) expect(text).not.toContain(m[1]!);
+    expect(c.all()).toContain("SARIF saved");
+  });
+});
