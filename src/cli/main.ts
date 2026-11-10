@@ -505,7 +505,8 @@ function explain(id: string | undefined, deps: CliDeps): number {
 
 function listRules(deps: CliDeps): number {
   deps.out("");
-  for (const r of RULES) deps.out(`  ${pc.bold(r.id)}  ${r.title.padEnd(36)} ${pc.dim(r.severity)}`);
+  const width = Math.max(...RULES.map((r) => r.title.length)) + 2;
+  for (const r of RULES) deps.out(`  ${pc.bold(r.id)}  ${r.title.padEnd(width)}${pc.dim(r.severity)}`);
   deps.out("");
   return 0;
 }

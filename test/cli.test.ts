@@ -144,7 +144,7 @@ describe("Pro", () => {
     expect(await c.run(join(apps, "notes-saas"), "--format", "html")).toBe(1);
     const html = readFileSync(join(work, "seaworthy-report.html"), "utf8");
     expect(html).toContain(DISCLAIMER);
-    expect(html).toContain("Seaworthy found 6 problems in notes-saas");
+    expect(html).toContain("Seaworthy found 7 problems in notes-saas");
     expect(html).toMatch(/<span class="brand-name">Seaworthy<\/span>/);
     // No external resources of any kind.
     expect(html).not.toMatch(/<script|<link|src="http|href="http|url\(/i);
@@ -170,7 +170,7 @@ describe("Pro", () => {
     clock = new Date("2026-11-11T09:00:00Z");
     const second = cli();
     await second.run(app);
-    expect(second.all()).toMatch(/Since scan #1 \(2026-11-10\): 1 fixed, 0 new, 5 still open/);
+    expect(second.all()).toMatch(/Since scan #1 \(2026-11-10\): 1 fixed, 0 new, 6 still open/);
 
     const raw = readFileSync(join(app, ".seaworthy", "history.json"), "utf8");
     const history = JSON.parse(raw);
@@ -184,7 +184,7 @@ describe("Pro", () => {
     const h = cli();
     expect(await h.run("history", app)).toBe(0);
     expect(h.all()).toMatch(/#1.*\n.*#2/);
-    expect(h.all()).toContain("6 → 5 findings, down 1");
+    expect(h.all()).toContain("7 → 6 findings, down 1");
 
     const cmp = cli();
     expect(await cmp.run("compare", app)).toBe(0);

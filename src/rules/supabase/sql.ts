@@ -154,3 +154,106 @@ export function dollarBody(stmt: SqlStatement): { body: string; offset: number }
   if (close < 0) return null;
   return { body: stmt.raw.slice(open, close), offset: stmt.rawOffset + open };
 }
+
+/**
+ * Returns `sql` with comments replaced by spaces, keeping every offset and newline. With
+ * `blankLiterals`, the insides of strings, quoted identifiers and dollar-quoted bodies are
+ * blanked too, so keyword and parenthesis searches only see real SQL structure.
+ */
+export function maskSql(sql: string, blankLiterals: boolean): string {
+  const out = sql.split("");
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i]!;
+    const next = sql[i + 1];
+    if (c === "-" && next === "-") {
+      const s = i;
+      while (i < n && sql[i] !== "\n") i++;
+      blank(s, i);
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const s = i;
+      let depth = 1;
+      i += 2;
+      while (i < n && depth > 0) {
+        if (sql[i] === "/" && sql[i + 1] === "*") (depth++, (i += 2));
+        else if (sql[i] === "*" && sql[i + 1] === "/") (depth--, (i += 2));
+        else i++;
+      }
+      blank(s, i);
+      continue;
+    }
+    if (c === "'" || c === '"' || ((c === "E" || c === "e") && next === "'" && !isIdentChar(sql[i - 1]))) {
+      const q = c === '"' ? '"' : "'";
+      const backslashEscapes = c === "E" || c === "e";
+      i += c === "E" || c === "e" ? 2 : 1;
+      const s = i;
+      while (i < n) {
+        if (backslashEscapes && sql[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (sql[i] === q) {
+          if (sql[i + 1] === q) {
+            i += 2;
+            continue;
+          }
+          break;
+        }
+        i++;
+      }
+      if (blankLiterals) blank(s, Math.min(i, n));
+      i++;
+      continue;
+    }
+    if (c === "$" && !isIdentChar(sql[i - 1])) {
+      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, i + 64));
+      if (tag) {
+        const open = i + tag[0].length;
+        const close = sql.indexOf(tag[0], open);
+        const end = close < 0 ? n : close;
+        if (blankLiterals) blank(open, end);
+        i = close < 0 ? n : close + tag[0].length;
+        continue;
+      }
+    }
+    i++;
+  }
+  return out.join("");
+}
+
+/** Index of the parenthesis that closes the one at `open`, in text from `maskSql(…, true)`. */
+export function closingParen(masked: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < masked.length; i++) {
+    if (masked[i] === "(") depth++;
+    else if (masked[i] === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** Splits text from `maskSql(…, true)` at commas that are not inside parentheses. Returns [start, end) ranges. */
+export function topLevelCommas(masked: string, from: number, to: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  let depth = 0;
+  let start = from;
+  for (let i = from; i < to; i++) {
+    const ch = masked[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === "," && depth === 0) (out.push([start, i]), (start = i + 1));
+  }
+  out.push([start, to]);
+  return out;
+}
+
+/** Normalises one identifier: quoted keeps its case, unquoted is lower-cased. */
+export function normaliseIdent(ident: string): string {
+  const t = ident.trim();
+  return t.startsWith('"') ? t.slice(1, -1).replace(/""/g, '"') : t.toLowerCase();
+}
