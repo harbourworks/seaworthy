@@ -1,0 +1,36 @@
+# Seaworthy: pre-launch security check. https://dynamomaritime.com/seaworthy
+name: Seaworthy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write # to show findings in the Security tab and on pull requests
+
+jobs:
+  seaworthy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Scan
+        id: scan
+        continue-on-error: true
+        run: npx --yes seaworthy-cli@0 --format sarif --output seaworthy.sarif
+        # Pro or Agency? Add your key as a repository secret and uncomment:
+        # env:
+        #   SEAWORTHY_LICENCE: ${{ secrets.SEAWORTHY_LICENCE }}
+      - name: Upload results to GitHub code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: seaworthy.sarif
+          category: seaworthy
+      - name: Fail on findings at or above the threshold
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
