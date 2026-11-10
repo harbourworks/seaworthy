@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "planted-test": { "url": "http://mcp.example.com/sse" }
+  }
+}
