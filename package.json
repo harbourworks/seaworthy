@@ -1,6 +1,7 @@
 {
   "name": "seaworthy-cli",
-  "version": "0.4.0",
+  "version": "0.5.0",
+  "mcpName": "io.github.harbourworks/seaworthy",
   "description": "Pre-launch security check for AI-built apps: leaked keys, open Supabase rules, unprotected routes, unsafe LLM code. Runs locally.",
   "keywords": [
     "security",

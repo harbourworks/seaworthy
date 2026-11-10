@@ -2,14 +2,15 @@
 
 All notable changes to seaworthy-cli. Versions follow [semantic versioning](https://semver.org); while it's 0.x, a minor version can change behaviour.
 
-## Unreleased
+## 0.5.0 (10 November 2026)
 
 - **`seaworthy mcp`:** an MCP server over stdio for AI coding assistants, with `scan_project`, `explain_finding` and `list_rules`. Local and read-only; findings come back without code excerpts.
 - **`seaworthy init --agent`:** adds a short "run the check before deploying" step to AGENTS.md, CLAUDE.md, Cursor rules or Copilot instructions. It shows the text and asks first.
 - **GitHub Action:** `uses: harbourworks/seaworthy@<version>` runs the scan, uploads SARIF and fails on the threshold.
 - **Docs:** every rule with what it reads and where it stops ([docs/rules.md](docs/rules.md)), and a full CLI reference ([docs/cli.md](docs/cli.md)).
 - Workflows use `github/codeql-action/upload-sarif@v4`.
-- The package now includes `dist/THIRD-PARTY-NOTICES.txt` for the bundled MCP SDK.
+- The package now includes `dist/THIRD-PARTY-NOTICES.txt` for the bundled MCP SDK, and `server.json` and `mcpName` for the MCP Registry.
+- SW-P02's explanation no longer says a plan can be bought "for 1p" (Stripe has a higher minimum).
 
 ## 0.4.0 (10 November 2026)
 
