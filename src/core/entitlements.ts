@@ -12,6 +12,7 @@ export type Feature =
   | "html-report" // --format html: a self-contained, Seaworthy-branded report
   | "history" // scan history and trends (.seaworthy/history.json)
   | "compare" // before/after comparison of two scans
+  | "pr-checks" // scan --baseline <ref>: report only what a pull request introduces
   | "white-label" // agency logo, agency name and client name on reports
   | "scan-all"; // scan --all: every project in a folder, one combined report
 
@@ -26,7 +27,7 @@ export interface TierInfo {
   features: readonly Feature[];
 }
 
-const PRO_FEATURES: readonly Feature[] = ["html-report", "history", "compare"];
+const PRO_FEATURES: readonly Feature[] = ["html-report", "history", "compare", "pr-checks"];
 
 export const TIER_INFO: Record<Tier, TierInfo> = {
   free: { name: "Free", pricePerYearGbp: 0, machines: 0, features: [] },
@@ -43,6 +44,7 @@ export const FEATURE_LABELS: Record<Feature, string> = {
   "html-report": "HTML reports",
   history: "Scan history and trends",
   compare: "Before/after comparison",
+  "pr-checks": "Pull-request checks that show only new problems",
   "white-label": "White-label reports",
   "scan-all": "Scanning every project in a folder (--all)",
 };

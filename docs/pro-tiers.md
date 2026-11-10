@@ -6,8 +6,9 @@ The tier-to-feature mapping in code lives in one place: `src/core/entitlements.t
 | --- | --- | --- | --- |
 | Price | £0 | £12 / month or £99 / year | £349 / year |
 | Every check, local CLI, GitHub Action | ✔ | ✔ | ✔ |
-| Terminal and JSON output, exit codes for CI | ✔ | ✔ | ✔ |
+| Terminal, JSON, SARIF and Markdown output, exit codes for CI | ✔ | ✔ | ✔ |
 | Fix text and paste-ready AI prompts | ✔ | ✔ | ✔ |
+| Pull-request checks: only new problems, one updated comment (`--baseline <ref>`, `init --pr`) | | ✔ | ✔ |
 | HTML report (`--format html`), Seaworthy-branded | | ✔ | ✔ |
 | Scan history and trends (`seaworthy history`) | | ✔ | ✔ |
 | Before/after comparison (`seaworthy compare`, plus "since last scan" on every scan) | | ✔ | ✔ |
@@ -54,6 +55,15 @@ The logo can be PNG, JPEG, WebP or SVG, up to 512 KB, and is embedded in the rep
 
 - **Free scanner:** Functional Source License 1.1 with an Apache 2.0 future licence (`LICENSE`). Anyone may use it for any purpose except a competing product or service, including at work, for clients and in CI. Each release becomes Apache 2.0 two years after it is published.
 - **Paid features (`src/pro/`):** Seaworthy Commercial Licence (`LICENSE-COMMERCIAL.md`). They need a valid key for a plan that includes them, and the licence check must not be bypassed. The package itself can still be installed and mirrored freely.
+
+## Pull-request checks
+
+`seaworthy --baseline <ref>` scans the base ref and the working tree with the same config (the working tree's, so a change can't loosen its own check), then matches findings by rule and file, paired in line order, so code that only moved isn't reported as new.
+
+- **The base is read, not checked out.** Its files come straight from git's object store into a temporary folder, so no hooks, filters or `core.fsmonitor` run, and your repo, index and worktrees are left exactly as they were.
+- **In GitHub Actions** (`seaworthy init --pr`): `fetch-depth: 0`, `--baseline "origin/$BASE_REF" --format markdown`, the summary added to the run, and one pull-request comment found by a hidden marker and updated on each push. It needs `pull-requests: write`. Pull requests from forks get a read-only token and no secrets, so they get the run summary and a full scan, not a comment.
+- **The comment** shows new problems in full, with the same masked three-line excerpt as the terminal; fixed problems as one line each (no code); and problems already there as counts only. Text that comes from the scanned code is escaped, so it can't add HTML, images, links or @mentions.
+- **Exit code:** 1 only for new findings at or above `failOn`.
 
 ## What reports and history contain
 
