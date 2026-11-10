@@ -1,6 +1,8 @@
 # Seaworthy
 
-**A pre-launch security check for AI-built apps.** Runs on your machine. Your code never leaves it.
+[![npm](https://img.shields.io/npm/v/seaworthy-cli)](https://www.npmjs.com/package/seaworthy-cli) [![CI](https://github.com/harbourworks/seaworthy/actions/workflows/seaworthy.yml/badge.svg)](https://github.com/harbourworks/seaworthy/actions/workflows/seaworthy.yml) [![Licence: FSL-1.1-ALv2](https://img.shields.io/badge/licence-FSL--1.1--ALv2-blue)](LICENSE)
+
+**A pre-launch security check for AI-built apps: run it before you deploy, add payments or make a repo public.** Runs on your machine. Your code never leaves it.
 
 Cursor, Claude Code, Lovable and Bolt write working code fast. They also skip auth checks, leak keys into the browser and leave database tables open to anyone with your public key. Seaworthy finds those gaps before your users do, and tells you how to fix each one in plain English.
 
@@ -11,8 +13,8 @@ npx seaworthy-cli
 No account, no install, no upload. Node 20 or later.
 
 ```
-  Seaworthy 0.1.0  ·  notes-app  ·  Next.js, React, Supabase, Stripe
-  42 files, 12 rules, 180 ms. Your code never left this machine.
+  Seaworthy 0.5.0  ·  notes-app  ·  Next.js, React, Supabase, Stripe
+  42 files, 18 rules, 180 ms. Your code never left this machine.
 
   ✖ Not seaworthy: 3 critical, 2 high
 
@@ -37,7 +39,20 @@ No account, no install, no upload. Node 20 or later.
 | **Dependencies** | Known vulnerabilities, from [OSV](https://osv.dev) |
 | **Headers** | Missing Content-Security-Policy, frame protection and HSTS |
 
-Checks run only when they apply to your stack: Next.js, React, Vue, Svelte, Supabase, Firebase, Stripe and the main LLM SDKs. They read what your code does, not just words in it, and are tuned for few false alarms. `seaworthy rules` lists them all and `seaworthy explain SW-D01` explains one.
+The code checks read JavaScript and TypeScript, including JSX, Vue, Svelte and Astro. Stack-specific checks run only when that stack is detected (Next.js, Supabase, Firebase, Stripe, MCP). They read what your code does, not just words in it, and are tuned for few false alarms. **[Every rule, and where each one stops](docs/rules.md)**; `seaworthy explain SW-D01` explains one.
+
+## When to run it
+
+- Before the first deploy.
+- After adding login, payments, file uploads or an AI feature.
+- Before making a repo public.
+- On every pull request, in CI (below).
+
+## Use it with your AI assistant
+
+- **MCP server:** `claude mcp add seaworthy -- npx -y seaworthy-cli mcp` in Claude Code. For Cursor (`.cursor/mcp.json`) or Claude Desktop, add `{ "mcpServers": { "seaworthy": { "command": "npx", "args": ["-y", "seaworthy-cli", "mcp"] } } }`. Your assistant gets `scan_project`, `explain_finding` and `list_rules`, running locally. Findings come back without code excerpts, so secrets aren't copied into the chat.
+- **Rules file:** `npx seaworthy-cli init --agent` adds a short "run the check before deploying" step to your AGENTS.md, CLAUDE.md, Cursor rules or Copilot instructions. It shows the text and asks first. The snippets are also in [agent-rules/](agent-rules).
+- **Any assistant:** `npx seaworthy-cli --format json` gives a [stable JSON shape](docs/cli.md#json-output) with a fix and, where useful, a paste-ready prompt for each finding.
 
 ## In CI (GitHub Actions)
 
@@ -57,6 +72,7 @@ npx seaworthy-cli path/to/app            # scan another folder
 npx seaworthy-cli --format json          # machine-readable output
 npx seaworthy-cli --format sarif         # SARIF for GitHub code scanning (seaworthy.sarif)
 npx seaworthy-cli --format markdown      # Markdown for CI summaries and comments (seaworthy-report.md)
+npx seaworthy-cli mcp                    # run as an MCP server for AI assistants (stdio)
 npx seaworthy-cli --fail-on critical     # only fail on critical findings
 npx seaworthy-cli --offline              # make no network calls at all
 ```
@@ -96,7 +112,9 @@ In the portal, enter the email you bought with and Polar sends a verification co
 
 Seaworthy catches common, serious mistakes. It is not a security audit or certification, and no tool finds everything.
 
-## Licence and support
+## Licence, security and support
+
+Full reference: [docs/cli.md](docs/cli.md) (commands, options, exit codes, JSON output). Changes: [CHANGELOG.md](CHANGELOG.md). Found a security problem in Seaworthy itself? See [SECURITY.md](SECURITY.md).
 
 Source-available, not open source: the scanner is under the [Functional Source License](LICENSE) (FSL-1.1-ALv2), free for any use except a competing product, and each release becomes Apache 2.0 two years after it ships. The paid features are under the [Seaworthy Commercial Licence](LICENSE-COMMERCIAL.md).
 
