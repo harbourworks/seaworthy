@@ -28,7 +28,8 @@ describe("notes-saas fixture", () => {
   const r = scan(join(FIXTURES, "notes-saas"), DEFAULT_CONFIG, RULES);
 
   it("finds exactly the planted secret and Supabase flaws", () => {
-    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01|B01)/.test(s))).toEqual([
+    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01|B01|A05)/.test(s))).toEqual([
+      "SW-A05 app/api/search/route.ts:13",
       "SW-B01 next.config.js:2",
       "SW-D01 supabase/migrations/0001_init.sql:20",
       "SW-D02 supabase/migrations/0001_init.sql:18",
@@ -773,5 +774,63 @@ describe("SW-B01 missing security headers", () => {
   });
   it("with no next.config, points at the next dependency", () => {
     expect(run(next()).all).toEqual(["package.json:3"]);
+  });
+});
+
+describe("SW-A05 SQL built from user input", () => {
+  const run = (files: Record<string, string>) => {
+    const p = project(files);
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    return all.findings.filter((f) => f.ruleId === "SW-A05").map((f) => `${f.file}:${f.line}:${f.column} ${f.confidence}`).sort();
+  };
+
+  it("vulnerable: query string concatenated, and template literals", () => {
+    expect(
+      run({
+        "app/api/a/route.ts":
+          "export async function GET(req: Request) {\n  const q = new URL(req.url).searchParams.get('q');\n" +
+          "  return pool.query(`SELECT * FROM notes WHERE title = '${q}'`);\n}\n",
+      }),
+    ).toEqual(["app/api/a/route.ts:3:59 high"]);
+  });
+  it("follows destructured bodies, route params, built strings and server actions", () => {
+    expect(
+      run({
+        "app/api/b/route.ts":
+          "export async function POST(req: Request, { params }: { params: { id: string } }) {\n" +
+          "  const { name } = await req.json();\n  const sql = 'UPDATE notes SET title = ' + name + ' WHERE id = ' + params.id;\n" +
+          "  return db.execute(sql);\n}\n",
+        "app/actions.ts": "'use server';\nexport async function remove(id: string) {\n  await knex.raw(`DELETE FROM notes WHERE id = ${id}`);\n}\n",
+        "server/express.js": "app.get('/u', (req, res) => db.query('SELECT * FROM users WHERE email = \"' + req.query.email + '\"'));\n",
+      }),
+    ).toEqual(["app/actions.ts:3:50 high", "app/api/b/route.ts:3:45 high", "server/express.js:1:78 high"]);
+  });
+  it("fixed: placeholders, tagged templates and Prisma's safe API", () => {
+    expect(
+      run({
+        "app/api/a/route.ts":
+          "export async function GET(req: Request) {\n  const q = new URL(req.url).searchParams.get('q');\n" +
+          "  await pool.query('SELECT * FROM notes WHERE title = $1', [q]);\n" +
+          "  await sql`SELECT * FROM notes WHERE title = ${q}`;\n" +
+          "  await prisma.$queryRaw`SELECT * FROM notes WHERE title = ${q}`;\n}\n",
+      }),
+    ).toEqual([]);
+  });
+  it("values from the session aren't user input; unknown values are medium", () => {
+    expect(
+      run({
+        "app/api/me/route.ts":
+          "export async function GET(req: Request) {\n  const user = await getUser(req);\n" +
+          "  return pool.query(\"SELECT * FROM notes WHERE user_id = '\" + user.id + \"'\");\n}\n",
+      }),
+    ).toEqual(["app/api/me/route.ts:3:63 medium"]);
+  });
+  it("ignores non-SQL strings and query() calls on other things", () => {
+    expect(
+      run({
+        "lib/x.ts": "const el = document.querySelector('#' + id);\nconst r = router.query('page ' + n);\nconsole.log('selected ' + item + ' from list');\n",
+      }),
+    ).toEqual([]);
   });
 });

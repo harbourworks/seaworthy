@@ -152,8 +152,11 @@ describe("Pro", () => {
     expect(html).toContain(DISCLAIMER);
     expect(html).toContain(`Seaworthy found ${findingCount(join(apps, "notes-saas"))} problems in notes-saas`);
     expect(html).toMatch(/<span class="brand-name">Seaworthy<\/span>/);
-    // No external resources of any kind.
-    expect(html).not.toMatch(/<script|<link|src="http|href="http|url\(/i);
+    // No external resources of any kind. CSS can only load url() from style blocks and
+    // attributes; code excerpts may legitimately say `new URL(…)` as escaped text.
+    expect(html).not.toMatch(/<script|<link|src="http|href="http/i);
+    const css = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>|style="([^"]*)"/gi)].map((m) => m[1] ?? m[2]).join("\n");
+    expect(css).not.toMatch(/url\(/i);
     expect(html).toContain("Content-Security-Policy");
     // Every secret from the fixture is masked.
     const env = readFileSync(join(apps, "notes-saas", ".env"), "utf8");
