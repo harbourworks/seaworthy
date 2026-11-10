@@ -22,7 +22,7 @@ export const p02ClientPrice: Rule = {
   docs: {
     summary:
       "Anything the browser sends can be edited. If your checkout takes the amount from the request, a " +
-      "customer can change it and buy your Pro plan for 1p. Look the price up on the server from something " +
+      "customer can change it and buy your Pro plan for pennies. Look the price up on the server from something " +
       "the customer is allowed to choose, such as a plan name, and use Stripe Price IDs you created.",
     bad: `const { plan, amount } = await req.json();\nstripe.checkout.sessions.create({ line_items: [{ price_data: { unit_amount: amount, … } }] });`,
     good:

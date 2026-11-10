@@ -1,0 +1,79 @@
+name: Seaworthy security check
+description: Pre-launch security check for AI-built apps. Finds leaked keys, open Supabase and Firebase rules, unprotected API routes and unsafe LLM code. Runs in your runner.
+author: Dynamo Maritime Ltd
+branding:
+  icon: anchor
+  color: blue
+
+inputs:
+  path:
+    description: Folder to scan, relative to the repository root.
+    default: "."
+  fail-on:
+    description: Fail at or above this severity (critical, high, medium or low). Empty uses seaworthy.config.json, which defaults to high.
+    default: ""
+  upload-sarif:
+    description: "Upload findings to GitHub code scanning (needs the security-events: write permission). Set to false to skip."
+    default: "true"
+  version:
+    description: The seaworthy-cli version to run, as an npm version or range.
+    default: "0"
+  licence:
+    description: Optional Seaworthy Pro or Agency licence key. Pass it from a secret, such as secrets.SEAWORTHY_LICENCE.
+    default: ""
+
+outputs:
+  failed:
+    description: '"true" if a finding was at or above the threshold.'
+    value: ${{ steps.scan.outputs.failed }}
+  sarif:
+    description: Path to the SARIF file.
+    value: ${{ steps.scan.outputs.sarif }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v5
+      with:
+        node-version: 22
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        SW_PATH: ${{ inputs.path }}
+        SW_FAIL_ON: ${{ inputs.fail-on }}
+        SW_VERSION: ${{ inputs.version }}
+        SEAWORTHY_LICENCE: ${{ inputs.licence }}
+      run: |
+        # Inputs arrive as environment variables and are checked, so nothing typed into the
+        # workflow is pasted into this script.
+        if ! [[ "$SW_VERSION" =~ ^[0-9A-Za-z.^~*x-]+$ ]]; then echo "::error::version must be an npm version or range"; exit 2; fi
+        # The path is relative to the repository root. npx runs from the runner's temp folder,
+        # so a package.json in the repo can't change which seaworthy-cli it runs.
+        target="$GITHUB_WORKSPACE/$SW_PATH"
+        args=(scan "$target" --format sarif --output "$RUNNER_TEMP/seaworthy.sarif")
+        if [ -n "$SW_FAIL_ON" ]; then args+=(--fail-on "$SW_FAIL_ON"); fi
+        set +e
+        (cd "$RUNNER_TEMP" && npx --yes "seaworthy-cli@$SW_VERSION" "${args[@]}")
+        code=$?
+        set -e
+        echo "sarif=$RUNNER_TEMP/seaworthy.sarif" >> "$GITHUB_OUTPUT"
+        echo "failed=$([ "$code" = 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+        if [ "$code" -gt 1 ]; then exit "$code"; fi
+
+    - name: Upload results to GitHub code scanning
+      # Only when the scan ran (exit 0 or 1), so a tool error doesn't upload a missing file.
+      if: inputs.upload-sarif == 'true' && (steps.scan.outputs.code == '0' || steps.scan.outputs.code == '1')
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif }}
+        category: seaworthy
+
+    - name: Fail on findings at or above the threshold
+      if: steps.scan.outputs.failed == 'true'
+      shell: bash
+      run: |
+        echo "::error::Seaworthy found problems at or above the threshold. See the scan step above, or the Security tab."
+        exit 1

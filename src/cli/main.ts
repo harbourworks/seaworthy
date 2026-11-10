@@ -6,14 +6,15 @@ import { ConfigError, hasBranding, loadConfig, mergeConfig, type Config } from "
 import { scan, type ScanResult } from "../core/scan.js";
 import { ProjectFiles } from "../core/project.js";
 import { excluder, walk } from "../core/walk.js";
-import { directDependencies } from "../deps/dependencies.js";
-import { lookupAdvisories, type OsvResult } from "../deps/osv.js";
+import type { OsvResult } from "../deps/osv.js";
+import { dependencyLookup } from "../deps/lookup.js";
 import { renderSarif } from "../reporters/sarif.js";
 import { renderMarkdown, type MarkdownOptions } from "../reporters/markdown.js";
 import { BaselineError, extractBaseline } from "../core/baseline.js";
 import { diffFindings } from "../pro/compare.js";
 import { prFailed, prJson, renderPrMarkdown, renderPrTerminal, type PrCheck } from "../pro/pr.js";
 import { initProject } from "./init.js";
+import { agentTargets, writeAgentTarget } from "./agent.js";
 import { FEATURE_LABELS, FEATURE_SHORT, TIER_INFO, hasFeature, priceLabel, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
 import { RULES, findRule } from "../rules/index.js";
 import { renderTerminal } from "../reporters/terminal.js";
@@ -46,9 +47,11 @@ export interface CliDeps {
   interactive?: boolean;
   /** Opens a link in the browser; false if it couldn't. Tests pass a fake. */
   openUrl?: (url: string) => boolean;
+  /** Asks a yes/no question at a terminal. Absent when nobody can answer (CI, piped). */
+  ask?: (question: string) => Promise<boolean>;
 }
 
-const COMMANDS = new Set(["scan", "init", "explain", "rules", "buy", "upgrade", "login", "logout", "status", "history", "compare"]);
+const COMMANDS = new Set(["scan", "init", "explain", "rules", "mcp", "buy", "upgrade", "login", "logout", "status", "history", "compare"]);
 
 const HELP = `
   ${pc.bold("seaworthy")}: pre-launch security check for AI-built apps. Runs locally.
@@ -58,8 +61,11 @@ const HELP = `
     seaworthy init [path]            Add a config file and a GitHub Actions workflow
       --pr                           ...that comments on pull requests with only
                                      the problems they introduce         ${pc.dim("Pro")}
+      --agent                        Add a security-check step to your AI assistant's
+                                     rules file (asks first; --yes to skip asking)
     seaworthy explain <rule-id>      Explain one rule and how to fix it
     seaworthy rules                  List every rule
+    seaworthy mcp                    Run as an MCP server (stdio) for AI coding assistants
 
   ${pc.bold("Options")}
     --format terminal|json|sarif|markdown|html
@@ -118,6 +124,8 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
         force: { type: "boolean" },
         pr: { type: "boolean" },
         "no-open": { type: "boolean" },
+        agent: { type: "boolean" },
+        yes: { type: "boolean", short: "y" },
       },
     });
   } catch (err) {
@@ -142,7 +150,13 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
     case "rules":
       return listRules(deps);
     case "init":
-      return init(args[0], ctx);
+      return values.agent ? initAgent(args[0], ctx) : init(args[0], ctx);
+    case "mcp": {
+      // Stdio is the protocol channel: nothing else may be printed to stdout from here on.
+      const { runStdio } = await import("../mcp/server.js");
+      await runStdio({ cwd: deps.cwd, version: VERSION, fetch: deps.fetch });
+      return 0;
+    }
     case "buy":
     case "upgrade":
       return buy(ctx);
@@ -261,7 +275,7 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
       }
       throw err;
     }
-    const osv = await dependencyLookup(p.dir, config, deps);
+    const osv = await dependencyLookup(p.dir, config, deps.fetch);
     const result = scan(p.dir, config, RULES, { osv });
     const label = multi ? `${p.name}: ` : "";
     if (osv?.status === "ok" && osv.checked > 0) {
@@ -375,7 +389,7 @@ async function baselineCheck(
 ): Promise<PrCheck> {
   const base = extractBaseline(dir, ref);
   try {
-    const osv = await dependencyLookup(base.dir, config, deps);
+    const osv = await dependencyLookup(base.dir, config, deps.fetch);
     const before = scan(base.dir, config, RULES, { osv }).findings;
     const diff = diffFindings(before, head.findings);
     // If OSV answered for one side only, every dependency finding would look new.
@@ -409,14 +423,40 @@ function githubLink(target: string, env: NodeJS.ProcessEnv): MarkdownOptions["li
   return (file, line) => `${server}/${repo}/blob/${sha}/${(prefix + file).split("/").map(encodeURIComponent).join("/")}#L${line}`;
 }
 
-/** Fetches known vulnerabilities for a project's dependencies, unless offline or SW-X01 is off. */
-async function dependencyLookup(dir: string, config: Config, deps: CliDeps): Promise<OsvResult | undefined> {
-  if (config.rules["SW-X01"] === "off") return undefined;
-  if (config.offline) return { status: "offline" };
-  const project = new ProjectFiles(dir, walk(dir, config.ignore).files, excluder(config.ignore));
-  const list = directDependencies(project);
-  if (list.length === 0) return undefined;
-  return lookupAdvisories(list, deps.fetch ?? fetch);
+/**
+ * Adds the Seaworthy step to the AI assistant files a project already has (or AGENTS.md).
+ * Shows exactly what it will add, and writes nothing unless the user says yes (or --yes).
+ */
+async function initAgent(path: string | undefined, ctx: Ctx): Promise<number> {
+  const { deps, values } = ctx;
+  const dir = resolve(deps.cwd, path ?? ".");
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return (deps.err(pc.red(`  Not a folder: ${dir}`)), 2);
+  const { targets, already } = agentTargets(dir);
+  deps.out("");
+  for (const f of already) deps.out(`  ${pc.dim("•")} ${f} already mentions Seaworthy, left as it is`);
+  if (targets.length === 0) return (deps.out(""), 0);
+
+  deps.out(`  ${pc.bold("This adds a security-check step for your AI coding assistant:")}`);
+  deps.out("");
+  for (const t of targets) deps.out(`    ${t.mode === "create" ? "Create" : "Append to"} ${pc.cyan(t.file)}  ${pc.dim(`(read by ${t.reads})`)}`);
+  deps.out("");
+  for (const line of targets[0]!.content.trimEnd().split("\n")) deps.out(pc.dim(`  │ `) + line);
+  deps.out("");
+
+  let go = Boolean(values.yes);
+  if (!go && deps.ask) go = await deps.ask("  Add it? [y/N] ");
+  if (!go) {
+    deps.out(deps.ask ? "  Nothing changed." : `  Nothing changed. Run again with --yes to add it, or copy the text above yourself.`);
+    deps.out("");
+    return 0;
+  }
+  for (const t of targets) {
+    writeAgentTarget(dir, t);
+    deps.out(`  ${pc.green("✔")} ${t.mode === "create" ? "Created" : "Updated"} ${t.file}`);
+  }
+  deps.out(pc.dim("  Commit it so everyone's assistant follows the same step."));
+  deps.out("");
+  return 0;
 }
 
 function init(path: string | undefined, ctx: Ctx): number {

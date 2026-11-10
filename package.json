@@ -1,19 +1,34 @@
 {
   "name": "seaworthy-cli",
-  "version": "0.4.0",
-  "description": "Pre-launch security check for AI-built apps: leaked keys, open database rules, unprotected API routes, unsafe LLM code. Runs locally; your code never leaves your machine.",
+  "version": "0.5.0",
+  "mcpName": "io.github.harbourworks/seaworthy",
+  "description": "Pre-launch security check for AI-built apps: leaked keys, open Supabase rules, unprotected routes, unsafe LLM code. Runs locally.",
   "keywords": [
     "security",
+    "security-scanner",
     "scanner",
     "sast",
+    "pre-launch",
+    "secrets",
+    "secret-scanning",
     "supabase",
+    "rls",
     "firebase",
     "nextjs",
     "stripe",
+    "stripe-webhook",
+    "sql-injection",
+    "prompt-injection",
     "llm",
     "mcp",
+    "mcp-server",
     "ai",
+    "ai-generated-code",
     "vibe-coding",
+    "cursor",
+    "claude-code",
+    "lovable",
+    "bolt",
     "cli"
   ],
   "homepage": "https://dynamomaritime.com/seaworthy",
@@ -39,11 +54,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsx scripts/notices.mts",
     "dev": "tsx src/cli/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "self-scan": "node dist/cli.js scan ."
+    "self-scan": "node dist/cli.js scan .",
+    "docs:rules": "tsx scripts/docs.mts"
   },
   "dependencies": {
     "@babel/parser": "7.26.3",
@@ -52,10 +68,12 @@
   },
   "devDependencies": {
     "@babel/types": "7.26.3",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@types/node": "20.17.10",
     "tsup": "8.3.5",
     "tsx": "4.19.2",
     "typescript": "5.6.3",
-    "vitest": "2.1.8"
+    "vitest": "2.1.8",
+    "zod": "4.6.7"
   }
 }

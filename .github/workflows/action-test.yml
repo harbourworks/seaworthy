@@ -1,0 +1,39 @@
+# Tests action.yml: a clean project must pass and a vulnerable one must fail.
+name: Action test
+
+on:
+  pull_request:
+    paths: [action.yml, .github/workflows/action-test.yml]
+  push:
+    branches: [main]
+    paths: [action.yml, .github/workflows/action-test.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Clean project passes
+        id: clean
+        uses: ./
+        with:
+          path: fixtures/clean
+          upload-sarif: "false"
+      - name: Vulnerable project fails
+        id: vulnerable
+        continue-on-error: true
+        uses: ./
+        with:
+          path: fixtures/apps/notes-saas
+          upload-sarif: "false"
+      - name: Check the outcomes
+        env:
+          CLEAN_FAILED: ${{ steps.clean.outputs.failed }}
+          VULN_FAILED: ${{ steps.vulnerable.outputs.failed }}
+          VULN_OUTCOME: ${{ steps.vulnerable.outcome }}
+        run: |
+          echo "clean failed=$CLEAN_FAILED; vulnerable failed=$VULN_FAILED, outcome=$VULN_OUTCOME"
+          [ "$CLEAN_FAILED" = "false" ] && [ "$VULN_FAILED" = "true" ] && [ "$VULN_OUTCOME" = "failure" ]

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.harbourworks/seaworthy",
+  "title": "Seaworthy",
+  "description": "Local pre-launch security scan for AI-built apps: keys, Supabase RLS, auth, Stripe, LLM.",
+  "repository": {
+    "url": "https://github.com/harbourworks/seaworthy",
+    "source": "github"
+  },
+  "websiteUrl": "https://dynamomaritime.com/seaworthy",
+  "version": "0.5.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "seaworthy-cli",
+      "version": "0.5.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ]
+    }
+  ]
+}

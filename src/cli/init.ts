@@ -31,7 +31,7 @@ jobs:
         #   SEAWORTHY_LICENCE: \${{ secrets.SEAWORTHY_LICENCE }}
       - name: Upload results to GitHub code scanning
         if: always() && hashFiles('seaworthy.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: seaworthy.sarif
           category: seaworthy
@@ -79,7 +79,7 @@ jobs:
           SEAWORTHY_LICENCE: \${{ secrets.SEAWORTHY_LICENCE }}
       - name: Upload results to GitHub code scanning
         if: always() && hashFiles('seaworthy.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: seaworthy.sarif
           category: seaworthy

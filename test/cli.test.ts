@@ -305,7 +305,7 @@ describe("init and SARIF", () => {
     expect(await cli().run("init", dir)).toBe(0);
     const wf = readFileSync(join(dir, ".github", "workflows", "seaworthy.yml"), "utf8");
     expect(wf).toContain("npx --yes seaworthy-cli@0 --format sarif --output seaworthy.sarif");
-    expect(wf).toContain("github/codeql-action/upload-sarif@v3");
+    expect(wf).toContain("github/codeql-action/upload-sarif@v4");
     expect(wf).toContain("security-events: write");
     expect(JSON.parse(readFileSync(join(dir, "seaworthy.config.json"), "utf8"))).toMatchObject({ failOn: "high" });
 
