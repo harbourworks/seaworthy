@@ -97,7 +97,7 @@ function projectSection(p: ReportProject, combined: boolean): string {
   const parts = [
     combined ? `<h2 class="project" id="${anchor(p.name)}">${esc(p.name)} <small>${esc(stackLine(p.result))}</small></h2>` : "",
     combined ? verdict(p.result.failed, p.result.findings) : "",
-    `<section class="summary"><h3>Summary</h3>${summary}</section>`,
+    `<section class="summary"><h3>Summary</h3>${summary}${legend(p.result.findings)}</section>`,
     p.comparison ? comparisonBlock(p.comparison) : "",
     p.result.findings.length ? `<section class="findings"><h3>Findings</h3>${p.result.findings.map((f) => findingCard(f, p.project)).join("")}</section>` : "",
   ];
@@ -132,8 +132,8 @@ function findingCard(f: Finding, project: ProjectFiles): string {
 <div class="f-head"><span class="pill sev-${f.severity}">${f.severity}</span><h4>${esc(f.title)}</h4><code class="rule">${esc(f.ruleId)}</code></div>
 <div class="loc">${esc(f.file)}:${f.line}</div>
 <pre class="code">${code.join("")}</pre>
-<p><b>Why it matters.</b> ${esc(f.why)} <span class="muted">(${esc(cap(f.severity))}: ${esc(SEVERITY_MEANING[f.severity])}.)</span></p>
-<p><b>How to fix it.</b> ${esc(f.fix)}</p>
+<p><b>Why it matters.</b> ${prose(f.why)}</p>
+<p><b>How to fix it.</b> ${prose(f.fix)}</p>
 ${f.fixPrompt ? `<details><summary>Prompt for your AI coding tool</summary><pre class="prompt">${esc(f.fixPrompt)}</pre></details>` : ""}
 </article>`;
 }
@@ -154,6 +154,18 @@ function stackLine(r: ScanResult): string {
 
 const cap = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 const anchor = (s: string) => "p-" + s.replace(/[^A-Za-z0-9_-]+/g, "-");
+
+/** Escaped text with `backticked` spans shown as code. */
+function prose(s: string): string {
+  return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+/** What each severity present in the report means, said once. */
+function legend(findings: Finding[]): string {
+  const present = (["critical", "high", "medium", "low"] as const).filter((sev) => findings.some((f) => f.severity === sev));
+  if (!present.length) return "";
+  return `<ul class="legend">${present.map((sev) => `<li><span class="pill sev-${sev}">${sev}</span> ${esc(cap(SEVERITY_MEANING[sev]))}.</li>`).join("")}</ul>`;
+}
 
 export function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -190,6 +202,11 @@ h4{margin:0;font-size:16px;flex:1}
 .finding{background:var(--card);border:1px solid var(--line);border-left-width:4px;border-radius:10px;padding:16px 18px;margin:12px 0;break-inside:avoid}
 .sev-border-critical{border-left-color:var(--crit)}.sev-border-high{border-left-color:var(--high)}.sev-border-medium{border-left-color:var(--med)}.sev-border-low{border-left-color:var(--low)}
 .f-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.f-head h4{min-width:0;overflow-wrap:anywhere}
+.finding p,.loc{overflow-wrap:anywhere}
+.finding p code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em;background:var(--code-bg,rgba(127,127,127,.12));padding:1px 5px;border-radius:5px}
+.legend{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:6px;font-size:14px;color:var(--muted)}
+.legend .pill{margin-right:6px}
 .rule{color:var(--muted);font-size:13px}
 .loc{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;color:var(--accent);margin:6px 0}
 pre{margin:8px 0;padding:10px 0;background:var(--code);border-radius:8px;overflow-x:auto;font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}

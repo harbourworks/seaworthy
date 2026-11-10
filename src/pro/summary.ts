@@ -21,8 +21,6 @@ export function plainSummary(projectName: string, findings: Finding[]): string[]
   const out = [
     `Seaworthy found ${total} problem${total === 1 ? "" : "s"} in ${projectName}: ${joinList(list)}.`,
   ];
-  const worst = counts[0]![0];
-  out.push(`${cap(worst)} means ${SEVERITY_MEANING[worst]}.`);
   const first = findings[0]!;
   out.push(`Start with "${first.title}" in ${first.file}, then work down the list. Each finding says why it matters and how to fix it.`);
   return out;
