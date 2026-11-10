@@ -5,7 +5,7 @@ import pc from "picocolors";
 import { ConfigError, hasBranding, loadConfig, mergeConfig, type Config } from "../core/config.js";
 import { scan, type ScanResult } from "../core/scan.js";
 import { ProjectFiles } from "../core/project.js";
-import { walk } from "../core/walk.js";
+import { excluder, walk } from "../core/walk.js";
 import { FEATURE_LABELS, TIER_INFO, hasFeature, priceLabel, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
 import { RULES, findRule } from "../rules/index.js";
 import { renderTerminal } from "../reporters/terminal.js";
@@ -217,7 +217,7 @@ async function scanCommand(command: "scan" | "history" | "compare", pathArg: str
       throw err;
     }
     const result = scan(p.dir, config, RULES);
-    const project = new ProjectFiles(p.dir, walk(p.dir, config.ignore).files);
+    const project = new ProjectFiles(p.dir, walk(p.dir, config.ignore).files, excluder(config.ignore));
     let comparison: Comparison | null = null;
     if (recordHistory) {
       const previous = loadHistory(p.dir).scans.at(-1) ?? null;

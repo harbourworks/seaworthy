@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { scan } from "../src/core/scan.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { RULES } from "../src/rules/index.js";
@@ -26,8 +27,8 @@ const jwt = (payload: object) =>
 describe("notes-saas fixture", () => {
   const r = scan(join(FIXTURES, "notes-saas"), DEFAULT_CONFIG, RULES);
 
-  it("finds exactly the planted SW-S01, SW-D01 and SW-D02 flaws", () => {
-    expect(ids(r).filter((s) => /SW-(S01|D01|D02)/.test(s))).toEqual([
+  it("finds exactly the planted secret and Supabase flaws", () => {
+    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12])/.test(s))).toEqual([
       "SW-D01 supabase/migrations/0001_init.sql:20",
       "SW-D02 supabase/migrations/0001_init.sql:18",
       "SW-S01 .env:3",
@@ -35,6 +36,10 @@ describe("notes-saas fixture", () => {
       "SW-S01 .env:5",
       "SW-S01 .env:6",
       "SW-S01 lib/stripe.ts:3",
+      "SW-S02 .env:1",
+      "SW-S02 .gitignore:1",
+      "SW-S03 .env:3",
+      "SW-S03 lib/supabase-browser.ts:6",
     ]);
   });
   it("does not flag the public anon key (decoy)", () => {
@@ -53,6 +58,9 @@ describe("chat-agent fixture", () => {
       "SW-S01 .cursor/mcp.json:11",
       "SW-S01 .cursor/mcp.json:5",
     ]);
+  });
+  it("does not flag its .gitignore, which lists .env (decoy)", () => {
+    expect(r.findings.some((f) => f.ruleId === "SW-S02")).toBe(false);
   });
   it("does not flag the Firebase web config key (decoy)", () => {
     expect(r.findings.some((f) => f.file === "lib/firebase.ts")).toBe(false);
@@ -304,6 +312,180 @@ describe("SW-D02 on `supabase db dump` output", () => {
     p.done();
     expect(r.findings.map((f) => `${f.ruleId} ${f.line} ${f.confidence} ${f.title}`)).toEqual([
       "SW-D02 7 high Policy on public.invoices lets any signed-in user read every row",
+    ]);
+  });
+});
+
+describe("SW-S02 .env committed or not git-ignored", () => {
+  /** Every finding for one rule at any confidence, as "file:line confidence". */
+  const run = (files: Record<string, string>, rule = "SW-S02", setup?: (root: string) => void) => {
+    const p = project(files);
+    setup?.(p.root);
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === rule);
+    return { all: mine.map((f) => `${f.file}:${f.line} ${f.confidence}`).sort(), titles: mine.map((f) => f.title) };
+  };
+  const secretEnv = `NEXT_PUBLIC_SITE_URL=https://example.org\nSTRIPE_SECRET_KEY=sk_test_${rand(24)}\n`;
+
+  it("vulnerable: a .env with secrets that .gitignore doesn't cover", () => {
+    expect(run({ ".env": secretEnv, ".gitignore": "node_modules\n.next\n" }).all).toEqual([
+      ".env:1 high",
+      ".gitignore:1 high",
+    ]);
+  });
+  it("fixed: .gitignore covers it", () => {
+    expect(run({ ".env": secretEnv, ".gitignore": "node_modules\n.env*\n!.env.example\n" }).all).toEqual([]);
+  });
+  it("with no .gitignore at all, reports the .env file only", () => {
+    expect(run({ ".env.local": secretEnv }).all).toEqual([".env.local:1 high"]);
+  });
+  it("a .env with only public values is medium confidence", () => {
+    expect(run({ ".env": "NEXT_PUBLIC_SITE_URL=https://example.org\n" }).all).toEqual([".env:1 medium"]);
+  });
+  it("ignores empty .env files, name-only files and templates", () => {
+    expect(run({ ".env": "# fill me in\nSTRIPE_SECRET_KEY=\n", ".gitignore": ".env.local\n" }).all).toEqual([
+      ".gitignore:1 medium", // advice: the first real .env would be committed
+    ]);
+    expect(run({ ".env.example": secretEnv, ".gitignore": ".env*\n!.env.example\n" }).all).toEqual([]);
+  });
+  it("a Python virtualenv folder called .env is not a .env file", () => {
+    expect(run({ ".env/bin/activate": "export PATH=/x\n", ".gitignore": ".env/\n" }).all).toEqual([]);
+  });
+  it("finds a .env that git still tracks after it was added to .gitignore", () => {
+    const r = run({ ".env": secretEnv, ".gitignore": ".env\n" }, "SW-S02", (root) => {
+      execFileSync("git", ["init", "-q"], { cwd: root });
+      execFileSync("git", ["add", "-f", ".env"], { cwd: root });
+    });
+    expect(r.all).toEqual([".env:1 high"]);
+    expect(r.titles).toEqual([".env is committed"]);
+  });
+  it("respects the config's ignore patterns for git-tracked files", () => {
+    const p = project({ "fixtures/app/.env": secretEnv, ".gitignore": ".env\n" });
+    execFileSync("git", ["init", "-q"], { cwd: p.root });
+    execFileSync("git", ["add", "-f", "fixtures/app/.env"], { cwd: p.root });
+    const r = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low", ignore: ["fixtures/**"] }, RULES);
+    p.done();
+    expect(r.findings.filter((f) => f.ruleId === "SW-S02")).toEqual([]);
+  });
+});
+
+describe("SW-S03 secret exposed to the browser", () => {
+  const run = (files: Record<string, string>) => {
+    const p = project(files);
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-S03");
+    return { all: mine.map((f) => `${f.file}:${f.line} ${f.confidence}`).sort(), titles: mine.map((f) => f.title) };
+  };
+  const ref = "https://abcdefghijklmnopqrst.supabase.co";
+  const serviceRole = () => jwt({ iss: "supabase", ref: "abcdefghijklmnopqrst", role: "service_role" });
+  const anon = () => jwt({ iss: "supabase", ref: "abcdefghijklmnopqrst", role: "anon" });
+
+  it("vulnerable: a service-role key with a public prefix in a .env file", () => {
+    const r = run({ ".env.local": `NEXT_PUBLIC_SUPABASE_URL=${ref}\nNEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=${serviceRole()}\n` });
+    expect(r.all).toEqual([".env.local:2 high"]);
+    expect(r.titles).toEqual(["Public variable NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY holds a Supabase service-role key"]);
+  });
+  it("judges values as well as names", () => {
+    const r = run({ ".env": `VITE_PAYMENTS=sk_live_${rand(30)}\nVITE_CONFIG=${serviceRole()}\n` });
+    expect(r.all).toEqual([".env:1 high", ".env:2 high"]);
+    expect(r.titles[0]).toBe("Public variable VITE_PAYMENTS holds a live secret key (Stripe or Clerk)");
+  });
+  it("fixed: public-by-design values and server-only names are fine", () => {
+    expect(
+      run({
+        ".env": [
+          `NEXT_PUBLIC_SUPABASE_ANON_KEY=${anon()}`,
+          `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_${rand(30)}`,
+          `NEXT_PUBLIC_RECAPTCHA_SITE_KEY=${rand(40)}`,
+          `SUPABASE_SERVICE_ROLE_KEY=${serviceRole()}`,
+          `NEXT_PUBLIC_SECRET_SANTA_URL=`,
+        ].join("\n"),
+      }).all,
+    ).toEqual([]);
+  });
+  it("checks git-ignored .env files too, because the build still bundles them", () => {
+    expect(
+      run({ ".gitignore": ".env*\n", ".env.local": `NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=${serviceRole()}\n` }).all,
+    ).toEqual([".env.local:1 high"]);
+  });
+  it("leaves LLM provider keys to SW-S04", () => {
+    expect(run({ ".env": `NEXT_PUBLIC_OPENAI_API_KEY=sk-proj-${rand(48)}\n` }).all).toEqual([]);
+  });
+  it("vulnerable: code reading a public-prefixed secret", () => {
+    const r = run({
+      "lib/supabase-browser.ts":
+        'import { createClient } from "@supabase/supabase-js";\n' +
+        "export const supabase = createClient(\n  process.env.NEXT_PUBLIC_SUPABASE_URL!,\n" +
+        "  process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!,\n);\n",
+      "src/admin.ts": "const k = import.meta.env.VITE_ADMIN_SECRET;\nconst j = import.meta.env.VITE_ADMIN_SECRET;\n",
+      "src/routes/+page.svelte": "<script>\n  import { PUBLIC_DB_PASSWORD, PUBLIC_SITE } from '$env/static/public';\n</script>\n",
+      "app/pay.tsx": '"use client";\nconst s = process.env["NEXT_PUBLIC_STRIPE_SECRET"];\n',
+    });
+    expect(r.all).toEqual([
+      "app/pay.tsx:2 high",
+      "lib/supabase-browser.ts:4 high",
+      "src/admin.ts:1 high", // reported once per file, not per use
+      "src/routes/+page.svelte:2 high",
+    ]);
+    expect(r.titles).toContain("Supabase service-role key read from public variable NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY");
+  });
+  it("is medium confidence in server-only files", () => {
+    expect(
+      run({ "app/api/admin/route.ts": "export async function GET() { return process.env.NEXT_PUBLIC_ADMIN_SECRET; }\n" }).all,
+    ).toEqual(["app/api/admin/route.ts:1 medium"]);
+  });
+  it("fixed: server-only names and public keys in code are fine", () => {
+    expect(
+      run({
+        "lib/admin.ts": "createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);\n",
+        "lib/browser.ts": "createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);\n",
+        "lib/notes.md": "Never use process.env.NEXT_PUBLIC_SERVICE_ROLE_KEY in the browser.\n",
+      }).all,
+    ).toEqual([]);
+  });
+});
+
+describe("SW-S03 reads code, not mentions", () => {
+  const run = (files: Record<string, string>) => {
+    const p = project(files);
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    return all.findings.filter((f) => f.ruleId === "SW-S03").map((f) => `${f.file}:${f.line}`).sort();
+  };
+  it("ignores mentions in comments, strings and docs", () => {
+    expect(
+      run({
+        "src/docs.ts":
+          "// never read process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY in the browser\n" +
+          "const bad = `createClient(url, process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!)`;\n" +
+          "/* process.env.VITE_ADMIN_SECRET */ const msg = 'set import.meta.env.VITE_ADMIN_SECRET';\n",
+      }),
+    ).toEqual([]);
+  });
+  it("catches destructuring and SvelteKit public imports in .ts files", () => {
+    expect(
+      run({
+        "src/a.ts": "const { NEXT_PUBLIC_DB_PASSWORD, NEXT_PUBLIC_SITE } = process.env;\n",
+        "src/routes/+page.ts": "import { PUBLIC_STRIPE_SECRET } from '$env/static/public';\n",
+      }),
+    ).toEqual(["src/a.ts:1", "src/routes/+page.ts:1"]);
+  });
+  it("reads Vue and Svelte script blocks, whatever the markup says", () => {
+    expect(
+      run({
+        "src/App.vue":
+          "<template><p>Don't panic, it's fine</p></template>\n<script setup>\n" +
+          "// import.meta.env.VITE_ADMIN_SECRET is just a comment\nconst k = import.meta.env.VITE_ADMIN_SECRET;\n</script>\n",
+        "src/routes/+page.svelte":
+          "<p>It's a page</p>\n<script>\n  import { PUBLIC_DB_PASSWORD } from '$env/static/public';\n</script>\n",
+      }),
+    ).toEqual(["src/App.vue:4", "src/routes/+page.svelte:3"]);
+  });
+  it("still reads JS that Babel can't parse, by text", () => {
+    expect(run({ "src/broken.js": "const k = process.env.NEXT_PUBLIC_ADMIN_SECRET;\n}}}{{{ <<<\n" })).toEqual([
+      "src/broken.js:1",
     ]);
   });
 });

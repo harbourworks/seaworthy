@@ -12,6 +12,8 @@ export class ProjectFiles {
   constructor(
     readonly root: string,
     readonly files: readonly string[],
+    /** Paths excluded by build-folder rules and the config's `ignore`, whatever git says. */
+    readonly isExcluded: (rel: string) => boolean = () => false,
   ) {}
 
   /** File contents, or null if the file is binary or unreadable. */

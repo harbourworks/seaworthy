@@ -4,7 +4,7 @@ import { atLeastConfidence, atLeastSeverity, compareFindings, type Finding } fro
 import { ProjectFiles } from "./project.js";
 import { detectStack, type StackFeature } from "./stack.js";
 import { applySuppressions, type SuppressionProblem } from "./suppress.js";
-import { walk } from "./walk.js";
+import { excluder, walk } from "./walk.js";
 import type { Rule } from "../rules/types.js";
 
 export interface ScanResult {
@@ -28,7 +28,7 @@ export interface ScanResult {
 export function scan(root: string, config: Config, rules: Rule[]): ScanResult {
   const started = performance.now();
   const { files, skippedLarge } = walk(root, config.ignore);
-  const project = new ProjectFiles(root, files);
+  const project = new ProjectFiles(root, files, excluder(config.ignore));
   const stack = detectStack(project);
 
   const active = rules.filter(

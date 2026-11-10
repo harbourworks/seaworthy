@@ -82,6 +82,16 @@ export function walk(root: string, extraIgnore: string[] = []): WalkResult {
   return { files, skippedLarge };
 }
 
+/**
+ * True for paths Seaworthy never scans whatever .gitignore says: build folders and the
+ * config's `ignore` patterns. Rules that look beyond the walked files (git-tracked files,
+ * git-ignored .env files) use this so they still respect the user's config.
+ */
+export function excluder(extraIgnore: string[] = []): (rel: string) => boolean {
+  const base = ignore().add(ALWAYS_SKIP).add(extraIgnore);
+  return (rel) => base.ignores(rel);
+}
+
 function readGitignore(dir: string): Ignore | null {
   const p = join(dir, ".gitignore");
   if (!existsSync(p)) return null;
