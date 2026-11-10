@@ -71,6 +71,12 @@ describe("chat-agent fixture", () => {
   it("reports the missing headers on the next dependency, as there is no next.config", () => {
     expect(ids(r).filter((s) => s.startsWith("SW-B01"))).toEqual(["SW-B01 package.json:12"]);
   });
+  it("finds the persona in the system prompt and the model output rendered as HTML", () => {
+    expect(ids(r).filter((s) => /^SW-L0[12]/.test(s))).toEqual(["SW-L01 app/api/assistant/route.ts:40", "SW-L02 app/chat/page.tsx:25"]);
+  });
+  it("does not flag the chat page's fixed system prompt (decoy)", () => {
+    expect(r.findings.some((f) => f.ruleId === "SW-L01" && f.file === "app/chat/page.tsx")).toBe(false);
+  });
   it("finds the open Firestore and Storage rules", () => {
     expect(ids(r).filter((s) => /^SW-D0[34]/.test(s))).toEqual(["SW-D03 firestore.rules:5", "SW-D04 storage.rules:5"]);
   });
@@ -831,6 +837,103 @@ describe("SW-A05 SQL built from user input", () => {
       run({
         "lib/x.ts": "const el = document.querySelector('#' + id);\nconst r = router.query('page ' + n);\nconsole.log('selected ' + item + ' from list');\n",
       }),
+    ).toEqual([]);
+  });
+});
+
+describe("SW-L01 user input in the system prompt", () => {
+  const run = (files: Record<string, string>) => {
+    const p = project(files);
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    return all.findings.filter((f) => f.ruleId === "SW-L01").map((f) => `${f.file}:${f.line}`).sort();
+  };
+  const route = (body: string) =>
+    `export async function POST(req: Request) {\n  const { message, persona } = await req.json();\n${body}\n}\n`;
+
+  it("vulnerable: OpenAI, Anthropic and AI SDK system prompts with request input", () => {
+    expect(
+      run({
+        "app/api/a/route.ts": route(
+          "  await openai.chat.completions.create({ model: 'gpt-4o', messages: [{ role: 'system', content: `You are ${persona}` }] });",
+        ),
+        "app/api/b/route.ts": route("  await anthropic.messages.create({ model: 'claude', system: 'Act as ' + persona, messages: [] });"),
+        "app/api/c/route.ts": route("  const sys = `Persona: ${persona}`;\n  await generateText({ model, system: sys, prompt: message });"),
+      }),
+    ).toEqual(["app/api/a/route.ts:3", "app/api/b/route.ts:3", "app/api/c/route.ts:3"]);
+  });
+  it("fixed: fixed system prompt, input as the user message, or an allow-list lookup", () => {
+    expect(
+      run({
+        "app/api/a/route.ts": route(
+          "  const PERSONAS = { tutor: 'You are a tutor.' };\n" +
+            "  await openai.chat.completions.create({ model: 'gpt-4o', messages: [\n" +
+            "    { role: 'system', content: PERSONAS[persona] ?? PERSONAS.tutor },\n    { role: 'user', content: message },\n  ] });",
+        ),
+      }),
+    ).toEqual([]); // an allow-list lookup can only produce strings you wrote
+  });
+  it("is not fooled by unrelated `system` keys or server-side values", () => {
+    expect(
+      run({
+        "lib/theme.ts": "export const theme = { system: 'dark ' + userPref, colors: {} };\n",
+        "app/api/d/route.ts":
+          "export async function POST(req: Request) {\n  const user = await getUser(req);\n" +
+          "  await openai.chat.completions.create({ model: 'm', messages: [{ role: 'system', content: 'Name: ' + user.name }] });\n}\n",
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("SW-L02 model output rendered as HTML or run as code", () => {
+  const run = (files: Record<string, string>) => {
+    const p = project(files);
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-L02");
+    return { all: mine.map((f) => `${f.file}:${f.line}`).sort(), titles: mine.map((f) => f.title).sort() };
+  };
+
+  it("vulnerable: through React state, useChat messages, innerHTML, eval and SQL", () => {
+    const r = run({
+      "app/a.tsx":
+        '"use client";\nexport default function A() {\n  const [reply, setReply] = useState("");\n' +
+        "  async function go() { const c = await openai.chat.completions.create({}); setReply(c.choices[0].message.content); }\n" +
+        "  return <div dangerouslySetInnerHTML={{ __html: reply }} />;\n}\n",
+      "app/b.tsx":
+        '"use client";\nexport default function B() {\n  const { messages } = useChat();\n' +
+        "  return messages.map((m) => <p key={m.id} dangerouslySetInnerHTML={{ __html: m.content }} />);\n}\n",
+      "lib/c.ts":
+        "const { text } = await generateText({ model, prompt });\nel.innerHTML = text;\neval(text);\n" +
+        "await db.query('SELECT * FROM t WHERE ' + text);\n",
+    });
+    expect(r.all).toEqual(["app/a.tsx:5", "app/b.tsx:4", "lib/c.ts:2", "lib/c.ts:3", "lib/c.ts:4"]);
+    expect(r.titles).toEqual([
+      "Model output rendered as HTML",
+      "Model output rendered as HTML",
+      "Model output rendered as HTML",
+      "Model output run as code",
+      "Model output used in a SQL query",
+    ]);
+  });
+  it("fixed: rendered as text, or sanitised first", () => {
+    expect(
+      run({
+        "app/a.tsx":
+          '"use client";\nexport default function A() {\n  const [reply, setReply] = useState("");\n' +
+          "  async function go() { const c = await openai.chat.completions.create({}); setReply(c.choices[0].message.content); }\n" +
+          "  return <><div>{reply}</div><div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(reply) }} /></>;\n}\n",
+        "lib/c.ts": "const { text } = await generateText({ model, prompt });\nconst safe = sanitizeHtml(text);\nel.innerHTML = safe;\n",
+      }).all,
+    ).toEqual([]);
+  });
+  it("leaves model-chosen shell commands to SW-L03, and ignores unrelated HTML", () => {
+    expect(
+      run({
+        "lib/d.ts":
+          "import { exec } from 'node:child_process';\nconst c = await openai.chat.completions.create({});\n" +
+          "child_process.exec(c.choices[0].message.content);\nel.innerHTML = '<b>' + title + '</b>';\n",
+      }).all,
     ).toEqual([]);
   });
 });
