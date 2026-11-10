@@ -14,7 +14,7 @@ jobs:
   seaworthy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: harbourworks/seaworthy@v0.5.0
         with:
           fail-on: high # optional; defaults to seaworthy.config.json, then high
