@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { llmsTxt, rulesHtml, rulesMarkdown } from "../src/docs/catalogue.js";
+import { AGENT_RULE_FILES } from "../src/cli/agent.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const write = (path: string, content: string) => {
@@ -20,6 +21,7 @@ const write = (path: string, content: string) => {
 
 const rules = rulesMarkdown();
 write(join(root, "docs", "rules.md"), rules);
+for (const [file, content] of Object.entries(AGENT_RULE_FILES)) write(join(root, "agent-rules", file), content);
 
 const i = process.argv.indexOf("--site");
 if (i > 0) {

@@ -1,0 +1,9 @@
+## Security check (Seaworthy)
+
+Before deploying, or before making this repository public, run a security check:
+
+1. Run `npx seaworthy-cli --format json` in the project folder. If the `seaworthy` MCP server is available, call its `scan_project` tool instead.
+2. Fix every finding at `high` or `critical` severity, using each finding's `fix` text. `npx seaworthy-cli explain <rule>` gives an example of the fix.
+3. Run the check again and confirm those findings are gone.
+
+Don't silence a finding with a `seaworthy-ignore` comment unless the user agrees, and always give the reason in the comment. Seaworthy runs locally and doesn't upload code.
