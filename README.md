@@ -64,6 +64,8 @@ This adds `seaworthy.config.json` and `.github/workflows/seaworthy.yml`. Commit 
 
 **Pull-request checks (Pro):** `npx seaworthy-cli init --pr` writes a workflow that scans each pull request against its base branch and posts one comment, updated on every push, with only the problems the pull request introduces in full, the ones it fixes listed, and the ones already there counted. The check fails only on new findings at or above your threshold. Add your licence key as a repository secret called `SEAWORTHY_LICENCE`; without one, pull requests get a full scan. The same comparison runs locally with `seaworthy --baseline origin/main`.
 
+**Scheduled scans (Pro):** `npx seaworthy-cli init --schedule` adds a weekly scan that alerts Slack, any webhook or your email when new problems appear, including new advisories for dependencies you haven't touched. Alerts never include code or secrets. [Set-up](docs/cli.md#scheduled-scans-and-alerts-pro).
+
 ## Usage
 
 ```
@@ -96,7 +98,7 @@ Seaworthy reads your files locally and never sends code, findings or file names 
 
 ## Plans
 
-Every check is free. **Pro** (£12 a month or £99 a year) adds pull-request checks that show only new problems, a self-contained HTML report, scan history and before/after comparison. **Agency** (£349 a year) adds white-label reports and scanning every project in a folder. Paid features never block a scan. See [dynamomaritime.com/seaworthy](https://dynamomaritime.com/seaworthy).
+Every check is free. **Pro** (£12 a month or £99 a year) adds pull-request checks that show only new problems, scheduled scans with Slack and email alerts, a self-contained HTML report, scan history and before/after comparison. **Agency** (£349 a year) adds white-label reports and scanning every project in a folder. Paid features never block a scan. See [dynamomaritime.com/seaworthy](https://dynamomaritime.com/seaworthy).
 
 Buying and using a plan takes three steps:
 
