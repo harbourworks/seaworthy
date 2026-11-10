@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - name: Scan
         id: scan
         continue-on-error: true
@@ -30,13 +30,13 @@ jobs:
         # env:
         #   SEAWORTHY_LICENCE: \${{ secrets.SEAWORTHY_LICENCE }}
       - name: Upload results to GitHub code scanning
-        if: always()
+        if: always() && hashFiles('seaworthy.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: seaworthy.sarif
           category: seaworthy
       - name: Fail on findings at or above the threshold
-        if: steps.scan.outcome == 'failure'
+        if: always() && steps.scan.outcome == 'failure'
         run: exit 1
 `;
 
