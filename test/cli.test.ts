@@ -78,7 +78,7 @@ describe("Free is never blocked or degraded", () => {
       const c = cli();
       expect(await c.run(cmd, join(apps, "chat-agent"))).toBe(1);
       expect(c.all()).toMatch(/Not seaworthy/);
-      expect(c.all()).toContain("Seaworthy Pro (£99/year) unlocks");
+      expect(c.all()).toContain("Seaworthy Pro (£12/month or £99/year) unlocks");
     }
   });
 
@@ -127,7 +127,7 @@ describe("login, logout and status", () => {
     const c = cli();
     await c.run("status");
     expect(c.all()).toContain("Seaworthy Free");
-    expect(c.all()).toContain("£99/year");
+    expect(c.all()).toContain("£12/month or £99/year");
     expect(c.all()).toContain("£349/year");
   });
 });

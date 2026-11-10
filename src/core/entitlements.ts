@@ -19,6 +19,8 @@ export interface TierInfo {
   name: string;
   /** Price in whole pounds per year; 0 for Free. */
   pricePerYearGbp: number;
+  /** Monthly price in whole pounds, for plans that offer one. */
+  pricePerMonthGbp?: number;
   /** Machines one key can be activated on at once. */
   machines: number;
   features: readonly Feature[];
@@ -28,7 +30,7 @@ const PRO_FEATURES: readonly Feature[] = ["html-report", "history", "compare"];
 
 export const TIER_INFO: Record<Tier, TierInfo> = {
   free: { name: "Free", pricePerYearGbp: 0, machines: 0, features: [] },
-  pro: { name: "Pro", pricePerYearGbp: 99, machines: 2, features: PRO_FEATURES },
+  pro: { name: "Pro", pricePerYearGbp: 99, pricePerMonthGbp: 12, machines: 2, features: PRO_FEATURES },
   agency: {
     name: "Agency",
     pricePerYearGbp: 349,
@@ -44,6 +46,13 @@ export const FEATURE_LABELS: Record<Feature, string> = {
   "white-label": "White-label reports",
   "scan-all": "Scanning every project in a folder (--all)",
 };
+
+/** "£12/month or £99/year", or "£349/year" for a plan with no monthly option. */
+export function priceLabel(tier: Exclude<Tier, "free">): string {
+  const t = TIER_INFO[tier];
+  const year = `£${t.pricePerYearGbp}/year`;
+  return t.pricePerMonthGbp ? `£${t.pricePerMonthGbp}/month or ${year}` : year;
+}
 
 export function hasFeature(tier: Tier, feature: Feature): boolean {
   return TIER_INFO[tier].features.includes(feature);

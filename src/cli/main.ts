@@ -6,7 +6,7 @@ import { ConfigError, hasBranding, loadConfig, mergeConfig, type Config } from "
 import { scan, type ScanResult } from "../core/scan.js";
 import { ProjectFiles } from "../core/project.js";
 import { walk } from "../core/walk.js";
-import { FEATURE_LABELS, TIER_INFO, hasFeature, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
+import { FEATURE_LABELS, TIER_INFO, hasFeature, priceLabel, requiredTier, type Feature, type Tier } from "../core/entitlements.js";
 import { RULES, findRule } from "../rules/index.js";
 import { renderTerminal } from "../reporters/terminal.js";
 import { renderJson } from "../reporters/json.js";
@@ -317,7 +317,7 @@ function multiJson(scanned: ReportProject[]): string {
 /** The single friendly line shown when a paid feature is used without the right plan. */
 export function upsell(feature: Feature, fallback: string): string {
   const t = TIER_INFO[requiredTier(feature)];
-  return `  ${pc.cyan("✦")} ${fallback} Seaworthy ${t.name} (£${t.pricePerYearGbp}/year) unlocks ${featurePhrase(feature)}: ${pc.cyan(PURCHASE_URL)}`;
+  return `  ${pc.cyan("✦")} ${fallback} Seaworthy ${t.name} (${priceLabel(requiredTier(feature))}) unlocks ${featurePhrase(feature)}: ${pc.cyan(PURCHASE_URL)}`;
 }
 
 /** "HTML reports", "scan history and trends": a label that reads well mid-sentence. */
@@ -444,8 +444,8 @@ async function status(ctx: Ctx): Promise<number> {
   const out: string[] = [""];
   if (s.state === "none") {
     out.push(`  ${pc.bold("Seaworthy Free")}  ${pc.dim("· every check, terminal, JSON and CI output")}`);
-    out.push(`  Pro (£${TIER_INFO.pro.pricePerYearGbp}/year) adds ${TIER_INFO.pro.features.map(featurePhrase).join(", ")}.`);
-    out.push(`  Agency (£${TIER_INFO.agency.pricePerYearGbp}/year) adds white-label reports and --all.`);
+    out.push(`  Pro (${priceLabel("pro")}) adds ${TIER_INFO.pro.features.map(featurePhrase).join(", ")}.`);
+    out.push(`  Agency (${priceLabel("agency")}) adds white-label reports and --all.`);
     out.push(pc.dim(`  ${PURCHASE_URL}`));
     out.push("");
     deps.out(out.join("\n"));

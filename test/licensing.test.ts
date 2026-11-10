@@ -20,6 +20,8 @@ describe("entitlements", () => {
     expect(features("pro")).toEqual(["compare", "history", "html-report"]);
     expect(features("agency")).toEqual(["compare", "history", "html-report", "scan-all", "white-label"]);
     expect([TIER_INFO.pro.pricePerYearGbp, TIER_INFO.agency.pricePerYearGbp]).toEqual([99, 349]);
+    expect(TIER_INFO.pro.pricePerMonthGbp).toBe(12);
+    expect(TIER_INFO.agency.pricePerMonthGbp).toBeUndefined();
     expect([TIER_INFO.pro.machines, TIER_INFO.agency.machines]).toEqual([2, 10]);
   });
   it("names the cheapest tier for each feature", () => {

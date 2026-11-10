@@ -4,7 +4,7 @@ The tier-to-feature mapping in code lives in one place: `src/core/entitlements.t
 
 | | Free | Pro | Agency |
 | --- | --- | --- | --- |
-| Price | £0 | £99 / year | £349 / year |
+| Price | £0 | £12 / month or £99 / year | £349 / year |
 | Every check, local CLI, GitHub Action | ✔ | ✔ | ✔ |
 | Terminal and JSON output, exit codes for CI | ✔ | ✔ | ✔ |
 | Fix text and paste-ready AI prompts | ✔ | ✔ | ✔ |
@@ -14,6 +14,8 @@ The tier-to-feature mapping in code lives in one place: `src/core/entitlements.t
 | White-label reports: your logo, agency name and client name | | | ✔ |
 | Scan every project in a folder, one combined report (`scan <folder> --all`) | | | ✔ |
 | Machines per key | n/a | 2 | 10 |
+
+Founding-member pricing at launch is a Polar discount, not a code change. Monthly and yearly Pro use the same licence-key benefit, so they unlock the same features.
 
 **Free is never blocked or degraded.** Using a paid feature without the right plan still runs the scan with terminal output and the normal exit code, and prints one line naming the plan that unlocks it.
 
