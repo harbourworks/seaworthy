@@ -80,6 +80,15 @@ describe("chat-agent fixture", () => {
   it("does not flag the chat page's fixed system prompt (decoy)", () => {
     expect(r.findings.some((f) => f.ruleId === "SW-L01" && f.file === "app/chat/page.tsx")).toBe(false);
   });
+  it("finds the shell tool and the MCP config problems", () => {
+    expect(ids(r).filter((s) => /^SW-L0[34]/.test(s))).toEqual([
+      "SW-L03 app/api/assistant/route.ts:19",
+      "SW-L03 app/api/assistant/route.ts:50",
+      "SW-L04 .cursor/mcp.json:11",
+      "SW-L04 .cursor/mcp.json:15",
+      "SW-L04 .cursor/mcp.json:5",
+    ]);
+  });
   it("finds the wildcard CORS and the missing rate limit on the assistant route", () => {
     expect(ids(r).filter((s) => /^SW-A0[34]/.test(s))).toEqual(["SW-A03 app/api/assistant/route.ts:34", "SW-A04 app/api/assistant/route.ts:10"]);
   });
@@ -1198,6 +1207,83 @@ describe("SW-A03 costly endpoint with no rate limit", () => {
     ).toEqual([]);
     expect(
       run({ "middleware.ts": "const rl = new Ratelimit({});\nexport async function middleware(req) { await rl.limit(ip); }\n", "app/api/c/route.ts": chat.replace("CHECK", "") }).all,
+    ).toEqual([]);
+  });
+});
+
+describe("SW-L03 agent tool with shell, file or code access", () => {
+  const run = (files: Record<string, string>) => {
+    const p = project(files);
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    return all.findings.filter((f) => f.ruleId === "SW-L03").map((f) => `${f.file}:${f.line}`).sort();
+  };
+  const openaiAgent = (guard = "") =>
+    "import { exec } from 'node:child_process';\nconst tools = [{ type: 'function', function: { name: 'run_command', parameters: {} } }];\n" +
+    "for (const call of choice.tool_calls) {\n  const { cmd } = JSON.parse(call.function.arguments);\n" + guard + "  exec(cmd);\n}\n";
+
+  it("vulnerable: OpenAI tool calls and AI SDK execute functions", () => {
+    expect(
+      run({
+        "lib/agent.ts": openaiAgent(),
+        "lib/sdk.ts":
+          "import fs from 'node:fs';\nexport const tools = { removeFile: tool({ description: 'Delete a file', parameters: z.object({ path: z.string() }),\n" +
+          "  execute: async ({ path }) => fs.promises.rm(path) }) };\n",
+      }),
+    ).toEqual(["lib/agent.ts:2", "lib/agent.ts:5", "lib/sdk.ts:3"]);
+  });
+  it("fixed: an allow-list or a confirmation step", () => {
+    expect(run({ "lib/agent.ts": openaiAgent("  if (!ALLOWED_COMMANDS.has(cmd)) throw new Error('no');\n") })).toEqual([]);
+    expect(run({ "lib/agent.ts": openaiAgent("  if (!(await confirm(cmd))) return;\n") })).toEqual([]);
+  });
+  it("ignores tools whose arguments never reach a shell, and shells that run fixed commands", () => {
+    expect(
+      run({
+        "lib/a.ts": "const tools = [{ type: 'function', function: { name: 'get_weather' } }];\nconst { city } = JSON.parse(call.function.arguments);\nawait fetchWeather(city);\n",
+        "lib/b.ts": "import { exec } from 'node:child_process';\nconst tools = [{ name: 'run_tests' }];\nif (choice.tool_calls.length) exec('npm test');\n",
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("SW-L04 MCP server config", () => {
+  const mcp = { "package.json": JSON.stringify({ dependencies: { "@modelcontextprotocol/sdk": "1.0.0" } }) };
+  const run = (config: object, name = ".cursor/mcp.json") => {
+    const p = project({ ...mcp, [name]: JSON.stringify(config, null, 2) });
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-L04");
+    return { all: mine.map((f) => `${f.file}:${f.line}`).sort(), titles: mine.map((f) => f.title).sort() };
+  };
+  it("vulnerable: secrets in args, env and headers, and open remote servers", () => {
+    const r = run({
+      mcpServers: {
+        db: { command: "npx", args: ["server-postgres", `postgres://app:${rand(16)}@db.example.net/app`] },
+        stripe: { command: "npx", env: { STRIPE_SECRET_KEY: `sk_live_${rand(30)}` } },
+        api: { url: "https://mcp.example.net/sse", headers: { Authorization: `Bearer ${rand(32)}` } },
+        open: { url: "http://10.0.0.5:8931/sse" },
+      },
+    });
+    expect(r.titles).toEqual([
+      'MCP server "api" has a credential in plain text',
+      'MCP server "db" has a database password in plain text',
+      'MCP server "open" is reached over plain HTTP with no authentication',
+      'MCP server "stripe" has a live secret key (Stripe or Clerk) in plain text',
+    ]);
+  });
+  it("fixed: environment references, local servers and authenticated remotes", () => {
+    expect(
+      run(
+        {
+          servers: {
+            db: { command: "npx", args: ["server-postgres", "${env:DATABASE_URL}"] },
+            gh: { command: "npx", env: { GITHUB_TOKEN: "${GITHUB_TOKEN}", LOG_LEVEL: "debug" } },
+            local: { url: "http://127.0.0.1:8931/sse" },
+            remote: { url: "https://mcp.example.net/sse", headers: { Authorization: "Bearer ${env:MCP_TOKEN}" } },
+          },
+        },
+        ".vscode/mcp.json",
+      ).all,
     ).toEqual([]);
   });
 });
