@@ -16,7 +16,7 @@ The tier-to-feature mapping in code lives in one place: `src/core/entitlements.t
 | Scan every project in a folder, one combined report (`scan <folder> --all`) | | | ✔ |
 | Machines per key | n/a | 2 | 10 |
 
-Founding-member pricing at launch is a Polar discount, not a code change. Monthly and yearly Pro use the same licence-key benefit, so they unlock the same features.
+Monthly and yearly Pro use the same licence-key benefit, so they unlock the same features.
 
 **Free is never blocked or degraded.** Using a paid feature without the right plan still runs the scan with terminal output and the normal exit code, and prints one line naming the plan that unlocks it.
 
