@@ -48,6 +48,11 @@ In `seaworthy.config.json`, in the folder you scan (for `--all`, the top folder)
 
 The logo can be PNG, JPEG, WebP or SVG, up to 512 KB, and is embedded in the report so it stays a single file.
 
+## Licences
+
+- **Free scanner:** Functional Source License 1.1 with an Apache 2.0 future licence (`LICENSE`). Anyone may use it for any purpose except a competing product or service, including at work, for clients and in CI. Each release becomes Apache 2.0 two years after it is published.
+- **Paid features (`src/pro/`):** Seaworthy Commercial Licence (`LICENSE-COMMERCIAL.md`). They need a valid key for a plan that includes them, and the licence check must not be bypassed. The package itself can still be installed and mirrored freely.
+
 ## What reports and history contain
 
 - **HTML reports** are single self-contained files with no scripts or external resources. Secrets in code excerpts are always masked. Every report says: *"Automated scan results. Not a security certification or a guarantee."*

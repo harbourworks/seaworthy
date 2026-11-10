@@ -2,14 +2,15 @@
   "name": "seaworthy-cli",
   "version": "0.1.0",
   "description": "Pre-launch security check for AI-built apps. Runs locally; your code never leaves your machine.",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "author": "Dynamo Maritime Ltd",
   "type": "module",
   "bin": {
     "seaworthy": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE-COMMERCIAL.md"
   ],
   "engines": {
     "node": ">=20"
