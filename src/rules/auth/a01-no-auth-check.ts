@@ -9,14 +9,14 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /** Next.js App Router route handlers and Pages Router API routes. */
-const APP_ROUTE_RE = /(^|\/)app\/(.+\/)?route\.[cm]?[jt]s$/;
-const PAGES_API_RE = /(^|\/)pages\/api\/.+\.[cm]?[jt]sx?$/;
+export const APP_ROUTE_RE = /(^|\/)app\/(.+\/)?route\.[cm]?[jt]s$/;
+export const PAGES_API_RE = /(^|\/)pages\/api\/.+\.[cm]?[jt]sx?$/;
 
 /** Calls that establish who the caller is, by name. Matched against the called function's own name. */
 const AUTH_CALL_RE =
   /^(auth|currentUser|getAuth|getSession|getServerSession|getServerAuthSession|getToken|getKindeServerSession|validateRequest|verifyIdToken|verifySessionCookie|verifyToken|verifyJwt|jwtVerify|authenticate|authorize|isAuthenticated|isSignedIn|protect|withApiAuthRequired)$|^(get|require|verify|check|ensure|assert|validate|fetch|load)(Current|Signed|Logged|Authed|Authenticated|Session)?(User|Session|Auth|Admin|Token|Claims|Viewer|Member|Owner|Account|Principal)(OrThrow|OrRedirect)?$/i;
 /** Wrappers that put auth in front of a handler: withAuth(handler), auth(handler), protect(handler). */
-const AUTH_WRAPPER_RE = /^(with\w*(Auth|Session|User)\w*|auth|protect(ed)?|requireAuth|authenticated|withApiAuthRequired|authMiddleware)$/i;
+export const AUTH_WRAPPER_RE = /^(with\w*(Auth|Session|User)\w*|auth|protect(ed)?|requireAuth|authenticated|withApiAuthRequired|authMiddleware)$/i;
 /** Checking a shared secret or token by hand counts too. */
 const HEADER_CHECK_RE =
   /headers\.get\(\s*["'`](authorization|x-api-key|x-cron-secret|x-webhook-secret|x-admin-token)["'`]|headers\[\s*["'`]authorization["'`]\s*\]|headers\.authorization\b|cookies\(\)\.get\(\s*["'`][^"'`]*(session|token|auth)[^"'`]*["'`]|process\.env\.\w*(SECRET|TOKEN|API_KEY)\w*[^\n;]*(!==?|===?)|(!==?|===?)[^\n;]*process\.env\.\w*(SECRET|TOKEN|API_KEY)/i;
@@ -103,7 +103,7 @@ export const a01NoAuthCheck: Rule = {
   },
 };
 
-interface Handler {
+export interface Handler {
   name: string;
   method: string | null;
   fn: Node;
@@ -113,7 +113,7 @@ interface Handler {
   siblingChecks: boolean;
 }
 
-function handlers(ast: Node, appRoute: boolean, pagesApi: boolean): Handler[] {
+export function handlers(ast: Node, appRoute: boolean, pagesApi: boolean): Handler[] {
   const found: Handler[] = [];
   walkAst(ast, (n) => {
     if (n.type === "ExportNamedDeclaration" && n.declaration) {
@@ -157,7 +157,7 @@ function methodOf(name: string, appRoute: boolean): string | null {
 }
 
 /** Whether a function, or a helper it calls, checks who the caller is. */
-class Evidence {
+export class Evidence {
   private localFns = new Map<string, Node>();
   private imported = new Map<string, string>(); // local name -> module specifier
   private cache = new Map<Node, boolean>();
@@ -239,7 +239,7 @@ function consequence(body: string): string {
 }
 
 /** The URL a route file serves, such as /api/notes/[id]. Route groups like (admin) are dropped. */
-function routeUrl(file: string): string | null {
+export function routeUrl(file: string): string | null {
   let m = /(?:^|\/)app\/(.*?)\/?route\.[cm]?[jt]s$/.exec(file);
   if (m) return "/" + m[1]!.split("/").filter((s) => s && !/^\(.*\)$/.test(s) && !s.startsWith("@")).join("/");
   m = /(?:^|\/)pages\/(api\/.+?)(\/index)?\.[cm]?[jt]sx?$/.exec(file);

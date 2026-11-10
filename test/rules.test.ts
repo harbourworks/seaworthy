@@ -28,8 +28,9 @@ describe("notes-saas fixture", () => {
   const r = scan(join(FIXTURES, "notes-saas"), DEFAULT_CONFIG, RULES);
 
   it("finds exactly the planted secret and Supabase flaws", () => {
-    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01|B01|A0[15])/.test(s))).toEqual([
+    expect(ids(r).filter((s) => /SW-(S0[1-3]|D0[12]|P01|B01|A0[125])/.test(s))).toEqual([
       "SW-A01 app/api/notes/[id]/route.ts:21",
+      "SW-A02 app/api/notes/[id]/route.ts:14",
       "SW-A05 app/api/search/route.ts:13",
       "SW-B01 next.config.js:2",
       "SW-D01 supabase/migrations/0001_init.sql:20",
@@ -1025,5 +1026,66 @@ describe("SW-A01 API route with no auth check", () => {
       "app/api/notes/route.ts": "export async function GET(req: Request) { const u = await getUser(req); }\n" + write,
     });
     expect(r.all).toEqual(["app/api/notes/route.ts:2 high"]);
+  });
+});
+
+describe("SW-A02 record fetched by ID with no ownership check", () => {
+  const next = { "package.json": JSON.stringify({ dependencies: { next: "14.2.3" } }) };
+  const admin = { "lib/admin.ts": "export const supabaseAdmin = createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!);\n" };
+  const run = (files: Record<string, string>) => {
+    const p = project({ ...next, ...admin, ...files });
+    const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    p.done();
+    const mine = all.findings.filter((f) => f.ruleId === "SW-A02");
+    return { all: mine.map((f) => `${f.file}:${f.line} ${f.confidence}`).sort(), titles: mine.map((f) => f.title).sort(), a01: all.findings.filter((f) => f.ruleId === "SW-A01").length };
+  };
+  const route = (query: string, imports = "import { supabaseAdmin } from '@/lib/admin';\n") =>
+    imports +
+    "export async function GET(req: Request, { params }: { params: { id: string } }) {\n" +
+    "  const user = await getUser(req);\n  if (!user) return new Response(null, { status: 401 });\n" +
+    `  ${query}\n}\n`;
+
+  it("vulnerable: the Supabase admin client, by route param or query string", () => {
+    const r = run({
+      "app/api/notes/[id]/route.ts": route("const { data } = await supabaseAdmin.from('notes').select('*').eq('id', params.id).single();"),
+      "app/api/files/route.ts": route(
+        "const id = new URL(req.url).searchParams.get('id');\n  await supabaseAdmin.from('files').delete().match({ id });",
+      ),
+    });
+    expect(r.all).toEqual(["app/api/files/route.ts:6 high", "app/api/notes/[id]/route.ts:5 high"]);
+    expect(r.titles).toContain("GET /api/files deletes a record from files by ID without checking the owner");
+  });
+  it("fixed: an owner filter, a later owner comparison, or the normal (RLS) client", () => {
+    expect(
+      run({
+        "app/api/a/[id]/route.ts": route("await supabaseAdmin.from('notes').select().eq('id', params.id).eq('user_id', user.id);"),
+        "app/api/b/[id]/route.ts": route(
+          "const { data } = await supabaseAdmin.from('notes').select().eq('id', params.id).single();\n  if (data.user_id !== user.id) return new Response(null, { status: 404 });",
+        ),
+        "app/api/c/[id]/route.ts": route("await supabase.from('notes').select().eq('id', params.id);", "import { supabase } from '@/lib/client';\n"),
+        "lib/client.ts": "export const supabase = createClient(url, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);\n",
+      }).all,
+    ).toEqual([]);
+  });
+  it("Prisma and Drizzle", () => {
+    expect(
+      run({
+        "app/api/p/[id]/route.ts": route("await prisma.invoice.findUnique({ where: { id: params.id } });", ""),
+        "app/api/q/[id]/route.ts": route("await prisma.invoice.findFirst({ where: { id: params.id, userId: user.id } });", ""),
+        "app/api/d/[id]/route.ts": route("await db.delete(notes).where(eq(notes.id, params.id));", ""),
+        "app/api/e/[id]/route.ts": route("await db.select().from(notes).where(and(eq(notes.id, params.id), eq(notes.userId, user.id)));", ""),
+      }).all,
+    ).toEqual(["app/api/d/[id]/route.ts:4 medium", "app/api/p/[id]/route.ts:4 high"]); // no import line in these
+  });
+  it("leaves handlers with no auth at all to SW-A01, so nothing is reported twice", () => {
+    const r = run({
+      "app/api/notes/[id]/route.ts":
+        "import { supabaseAdmin } from '@/lib/admin';\nexport async function DELETE(req: Request, { params }) {\n  await supabaseAdmin.from('notes').delete().eq('id', params.id);\n}\n",
+    });
+    expect(r.all).toEqual([]);
+    expect(r.a01).toBe(1);
+  });
+  it("ignores IDs that don't come from the request", () => {
+    expect(run({ "app/api/me/route.ts": route("await supabaseAdmin.from('profiles').select().eq('id', user.id).single();") }).all).toEqual([]);
   });
 });
