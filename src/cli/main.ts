@@ -12,6 +12,7 @@ import { onlineLookups } from "../deps/lookup.js";
 import { renderSarif } from "../reporters/sarif.js";
 import { renderMarkdown, type MarkdownOptions } from "../reporters/markdown.js";
 import { BaselineError, extractBaseline } from "../core/baseline.js";
+import { isAncestor } from "../core/git.js";
 import { diffFindings } from "../pro/compare.js";
 import { prFailed, prJson, renderPrMarkdown, renderPrTerminal, type PrCheck } from "../pro/pr.js";
 import { AlertConfigError, NOTIFY_ON, decide, destinationsFromEnv, githubContext, hasDestination, sendAlerts, type Destinations, type NotifyOn } from "../pro/alerts.js";
@@ -453,6 +454,11 @@ async function baselineCheck(
     const { osv, npm } = await onlineLookups(base.dir, config, deps.fetch);
     const before = scan(base.dir, config, RULES, { osv, npm }).findings;
     const diff = diffFindings(before, head.findings);
+    // The base folder has no history of its own, so a finding in git history is only new if
+    // the commit that added it isn't already part of the base ref.
+    const old = diff.added.filter((f) => f.commit && isAncestor(dir, f.commit, base.sha));
+    diff.stillPresent.push(...old);
+    diff.added = diff.added.filter((f) => !old.includes(f));
     // If OSV answered for one side only, every dependency finding would look new.
     if (headOsv?.status === "ok" && osv?.status === "failed") {
       const isDep = (f: { ruleId: string }) => f.ruleId === "SW-X01";

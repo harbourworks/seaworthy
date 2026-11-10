@@ -55,6 +55,7 @@ export function scan(root: string, config: Config, rules: Rule[], extras: { osv?
           why: raw.why,
           fix: raw.fix,
           ...(raw.fixPrompt ? { fixPrompt: raw.fixPrompt } : {}),
+          ...(raw.commit ? { commit: raw.commit } : {}),
         });
       }
     } catch (err) {

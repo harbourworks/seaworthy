@@ -11,7 +11,7 @@ import type { Confidence, Severity } from "../core/finding.js";
  */
 export const COVERAGE: Record<string, string> = {
   "SW-S01":
-    "Files as they are now, using each provider's published key format (Stripe, GitHub, OpenAI, Anthropic, Supabase, AWS, Slack, SendGrid, npm, Hugging Face, Google, private keys and database URLs). Supabase service-role JWTs are flagged; anon keys aren't. Git-ignored files are skipped, because they aren't committed. Doesn't read git history yet.",
+    "Files as they are now, using each provider's published key format (Stripe, GitHub, OpenAI, Anthropic, Supabase, AWS, Slack, SendGrid, npm, Hugging Face, Google, private keys and database URLs). Supabase service-role JWTs are flagged; anon keys aren't. Git-ignored files are skipped, because they aren't committed. When you scan a repository's top folder, earlier versions of files in git history are checked too (newest first, up to 20,000 file versions), and a secret found only there is reported with the commit that added it.",
   "SW-S02": ".env files that git tracks or that no .gitignore covers. Templates such as .env.example and empty files are skipped.",
   "SW-S03":
     "Variables with a public prefix (NEXT_PUBLIC_, VITE_, REACT_APP_, EXPO_PUBLIC_, NUXT_PUBLIC_, GATSBY_, PUBLIC_) whose name or value is a secret, in .env files (including git-ignored ones, which still get bundled) and in code that reads them.",
@@ -62,7 +62,7 @@ export function catalogue(): CatalogueEntry[] {
 export const READS =
   "JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03).";
 
-export const STILL_TO_COME = ["Secrets in git history"];
+export const STILL_TO_COME: string[] = [];
 
 const SITE = "https://dynamomaritime.com";
 export const LINKS = {
@@ -94,7 +94,7 @@ export function rulesMarkdown(): string {
   for (const r of rows) {
     out.push(`## ${r.id}`, "", `**${r.title}** · ${r.severity} · runs on: ${r.runsOn}`, "", r.summary, "", `**Checks:** ${r.coverage}`, "");
   }
-  out.push("## Not checked yet", "", ...STILL_TO_COME.map((s) => `- ${s}`), "");
+  if (STILL_TO_COME.length) out.push("## Not checked yet", "", ...STILL_TO_COME.map((s) => `- ${s}`), "");
   out.push("*Seaworthy catches common, serious mistakes. It is not a security audit or a guarantee.*", "");
   return out.join("\n");
 }
@@ -132,9 +132,10 @@ export function rulesHtml(): string {
       `    <p><strong>Checks:</strong> ${html(r.coverage)}</p>`,
     );
   }
+  if (STILL_TO_COME.length) {
+    out.push(`    <h2 id="not-yet">Not checked yet</h2>`, `    <ul>${STILL_TO_COME.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>`);
+  }
   out.push(
-    `    <h2 id="not-yet">Not checked yet</h2>`,
-    `    <ul>${STILL_TO_COME.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>`,
     `    <p><em>Seaworthy catches common, serious mistakes. It is not a security audit or a guarantee.</em></p>`,
     `  </div>`,
     `</div>`,

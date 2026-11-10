@@ -37,7 +37,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 
 API keys, tokens and passwords written into files that get committed. Anyone with access to the repo, its forks or its history can use them, and bots scrape public repos for keys within minutes of a push. Deleting the line is not enough: the key stays in git history, so it has to be rotated.
 
-**Checks:** Files as they are now, using each provider's published key format (Stripe, GitHub, OpenAI, Anthropic, Supabase, AWS, Slack, SendGrid, npm, Hugging Face, Google, private keys and database URLs). Supabase service-role JWTs are flagged; anon keys aren't. Git-ignored files are skipped, because they aren't committed. Doesn't read git history yet.
+**Checks:** Files as they are now, using each provider's published key format (Stripe, GitHub, OpenAI, Anthropic, Supabase, AWS, Slack, SendGrid, npm, Hugging Face, Google, private keys and database URLs). Supabase service-role JWTs are flagged; anon keys aren't. Git-ignored files are skipped, because they aren't committed. When you scan a repository's top folder, earlier versions of files in git history are checked too (newest first, up to 20,000 file versions), and a secret found only there is reported with the commit that added it.
 
 ## SW-S02
 
@@ -206,9 +206,5 @@ AI coding tools sometimes invent package names that sound right but don't exist.
 A few response headers make whole classes of attack harder: Content-Security-Policy limits which scripts can run (a second line of defence against XSS), X-Frame-Options or frame-ancestors stops other sites framing yours to trick clicks, and Strict-Transport-Security keeps browsers on HTTPS. They are not a fix for a real bug, which is why this is low severity, but they are cheap to add. Some hosts add HSTS for you; `curl -I https://your-site` shows what is sent.
 
 **Checks:** Next.js projects only. Looks for Content-Security-Policy, frame protection and HSTS in next.config, middleware, host config (vercel.json, netlify.toml, _headers, firebase.json) and nginx, Caddy, Apache or Traefik config.
-
-## Not checked yet
-
-- Secrets in git history
 
 *Seaworthy catches common, serious mistakes. It is not a security audit or a guarantee.*
