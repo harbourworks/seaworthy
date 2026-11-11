@@ -9,6 +9,8 @@ const SHELLS = new Set(["bash", "sh", "zsh", "cmd", "powershell", "pwsh"]);
 const POSIX_FLAG_RE = /^-[a-z]*c$/;
 const CMD_FLAG_RE = /^\/[ck]$/i;
 const PS_FLAG_RE = /^-(c|command|e|ec|enc|encodedcommand)$/i;
+/** PowerShell's `-File` (and its short forms): everything after it goes to the script. */
+const PS_FILE_RE = /^-f(i(le?)?)?$/i;
 /** A download piped straight into a shell: `curl ... | sh`, `wget -qO- ... | bash`, `irm ... | iex`. */
 const DOWNLOAD_PIPE_RE =
   /\b(curl|wget)\b[^|;&\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b|\b(iwr|irm|invoke-webrequest|invoke-restmethod)\b[^|;\n]*\|\s*(iex|invoke-expression)\b/i;
@@ -76,13 +78,15 @@ export const l05McpAutoApprove: Rule = {
           const i = text.indexOf(needle, serverAt);
           return project.position(file, i >= 0 ? i : serverAt);
         };
-        const { shell, flag, words } = launch(server);
+        const { shell, flag, flagAt, words, run } = launch(server);
+        if (!shell || !flag) continue;
 
-        const piped = words.find((w) => DOWNLOAD_PIPE_RE.test(w));
+        const piped = run.find((w) => DOWNLOAD_PIPE_RE.test(w));
         if (piped) {
           out.push({
             file,
-            ...at(JSON.stringify(piped).slice(1, 20)),
+            // A pipe split over several words is reported at the first one the shell runs.
+            ...at(JSON.stringify(words.includes(piped) ? piped : words[flagAt + 1]!).slice(1, -1).slice(0, 19)),
             severity: "low",
             confidence: "high",
             title: `MCP server "${name}" downloads a script and pipes it to a shell every time it starts`,
@@ -96,8 +100,8 @@ export const l05McpAutoApprove: Rule = {
               `In ${file}, the MCP server "${name}" starts by piping a download into a shell (${clip(piped)}). ${FIX_PROMPT} ` +
               `Find the package or script it installs, pin it to a version and run it directly.`,
           });
-        } else if (shell && flag) {
-          const rest = words.slice(words.indexOf(flag) + 1).map((w) => (/\s/.test(w) ? JSON.stringify(w) : w));
+        } else {
+          const rest = words.slice(flagAt + 1).map((w) => (/\s/.test(w) ? JSON.stringify(w) : w));
           const line = clip([shell, flag, ...rest].join(" "));
           out.push({
             file,
@@ -122,27 +126,65 @@ export const l05McpAutoApprove: Rule = {
   },
 };
 
-/** The shell a server is launched with and its run-a-command flag, plus every word of the launch line. */
-function launch(server: Server): { shell: string | null; flag: string | null; words: string[] } {
+interface Launch {
+  shell: string | null;
+  flag: string | null;
+  /** Index of `flag` in `words`. */
+  flagAt: number;
+  /** Every word of the launch line: `command` split on spaces, then `args`. */
+  words: string[];
+  /** The text the shell runs as a command line. */
+  run: string[];
+}
+
+/** The shell a server is launched with, its run-a-command flag, and what that flag makes it run. */
+function launch(server: Server): Launch {
   const [first = "", ...rest] = server.command!.trim().split(/\s+/);
   const words = [first, ...rest, ...(server.args ?? []).filter((a): a is string => typeof a === "string")];
+  const none: Launch = { shell: null, flag: null, flagAt: -1, words, run: [] };
   const base = (w: string) => w.split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
   // `/usr/bin/env [NAME=value ...] bash -c ...` starts bash.
   let start = 0;
   if (base(first) === "env") {
     start = words.findIndex((w, i) => i > 0 && !w.startsWith("-") && !/^\w+=/.test(w));
-    if (start < 0) return { shell: null, flag: null, words };
+    if (start < 0) return none;
   }
   const shell = base(words[start]!);
   const kind = shell.toLowerCase();
-  if (!SHELLS.has(kind)) return { shell: null, flag: null, words };
-  const flagRe = kind === "cmd" ? CMD_FLAG_RE : kind === "powershell" || kind === "pwsh" ? PS_FLAG_RE : POSIX_FLAG_RE;
-  // A command line given whole in "command" ("bash -c 'curl ... | sh'") is matched as one string.
-  if (rest.length && DOWNLOAD_PIPE_RE.test(server.command!)) words.push(server.command!);
-  const flag = words.slice(start + 1).find((w) => flagRe.test(w)) ?? null;
+  if (!SHELLS.has(kind)) return none;
+  const posix = kind !== "cmd" && kind !== "powershell" && kind !== "pwsh";
+  const flagAt = findFlag(kind, words, start + 1);
+  if (flagAt < 0) return { ...none, shell };
+  const flag = words[flagAt]!;
+  // A POSIX shell runs only the word after -c (later words are $0, $1 ...); cmd and PowerShell join the rest.
+  const run = posix ? words.slice(flagAt + 1, flagAt + 2) : [words.slice(flagAt + 1).join(" ")];
+  // A command line given whole in "command" ("bash -c 'curl ... | sh'") is split on spaces, so match it as one string.
+  if (flagAt <= rest.length) run.push(words.slice(flagAt + 1, rest.length + 1).join(" ").replace(/^(['"])(.*)\1$/, "$2"));
   // `cmd /c npx ...` is the usual way to start npx servers on Windows; only flag it when it chains or redirects.
-  if (kind === "cmd" && flag && !/[&|<>^]/.test(words.slice(words.indexOf(flag) + 1).join(" "))) return { shell, flag: null, words };
-  return { shell, flag, words };
+  if (kind === "cmd" && !/[&|<>^]/.test(words.slice(flagAt + 1).join(" "))) return { ...none, shell };
+  return { shell, flag, flagAt, words, run };
+}
+
+/**
+ * Where the run-a-command flag is, reading only the shell's own options: a POSIX shell stops at its
+ * first operand (the script file) and PowerShell at `-File`, so options passed on to a script are skipped.
+ */
+function findFlag(kind: string, words: string[], from: number): number {
+  for (let i = from; i < words.length; i++) {
+    const w = words[i]!;
+    if (kind === "cmd") {
+      if (CMD_FLAG_RE.test(w)) return i;
+    } else if (kind === "powershell" || kind === "pwsh") {
+      if (PS_FILE_RE.test(w)) return -1;
+      if (PS_FLAG_RE.test(w)) return i;
+    } else {
+      if (POSIX_FLAG_RE.test(w)) return i;
+      if (w === "--" || !/^[-+]/.test(w)) return -1;
+      // Options that take a value: `-o pipefail`, `--rcfile file`.
+      if (/^[-+][oO]$|^--(rcfile|init-file)$/.test(w)) i++;
+    }
+  }
+  return -1;
 }
 
 /** Blanks out // and /* *\/ comments, keeping every offset, so JSON with comments parses. */

