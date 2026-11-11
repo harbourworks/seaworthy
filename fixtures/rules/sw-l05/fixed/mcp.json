@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "docs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@2025.8.21", "./docs"]
+    },
+    "deploy-tools": {
+      "command": "npx",
+      "args": ["-y", "example-deploy-mcp@1.4.2"]
+    },
+    "notes": {
+      "command": "node",
+      "args": ["tools/notes/server.js"]
+    }
+  }
+}

