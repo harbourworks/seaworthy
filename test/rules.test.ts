@@ -359,6 +359,163 @@ describe("SW-D02 on `supabase db dump` output", () => {
   });
 });
 
+describe("SW-D05 view or security definer function that bypasses RLS", () => {
+  const D05 = resolve(__dirname, "../fixtures/rules/sw-d05");
+  const d05 = (r: ReturnType<typeof scan>) => r.findings.filter((f) => f.ruleId === "SW-D05");
+  /** Every SW-D05 finding at any confidence, as "file:line confidence". */
+  const atAnyConfidence = (root: string) => {
+    const r = scan(root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    return {
+      all: d05(r).map((f) => `${f.file}:${f.line} ${f.confidence}`),
+      findings: d05(r),
+      suppressed: r.suppressed.filter((f) => f.ruleId === "SW-D05").map((f) => `${f.file}:${f.line}`),
+    };
+  };
+  const supa = { "package.json": JSON.stringify({ dependencies: { "@supabase/supabase-js": "2.0.0" } }) };
+  /** SW-D05 lines for one migration file (or several), at any confidence. */
+  const run = (sql: string | Record<string, string>) => {
+    const files = typeof sql === "string" ? { "supabase/migrations/1.sql": sql } : sql;
+    const p = project({ ...supa, ...files });
+    const r = atAnyConfidence(p.root);
+    p.done();
+    return r.all.map((s) => s.replace(/^supabase\/migrations\//, ""));
+  };
+  const notes =
+    "create table notes (id int, user_id uuid, body text);\nalter table notes enable row level security;\n";
+
+  it("vulnerable fixture: flags the view over an RLS table and the definer function with no search_path", () => {
+    const r = atAnyConfidence(join(D05, "vulnerable"));
+    const file = "supabase/migrations/20260101000000_notes.sql";
+    expect(r.all).toEqual([`${file}:10 high`, `${file}:14 medium`]);
+    const [view, fn] = r.findings;
+    expect(view!.title).toBe("View public.note_previews bypasses row-level security on public.notes");
+    expect(view!.severity).toBe("high");
+    expect(view!.fix).toContain("alter view public.note_previews set (security_invoker = true);");
+    expect(view!.fixPrompt).toContain("public.note_previews");
+    expect(fn!.title).toBe("Function public.note_count runs as its owner (security definer) with no search_path");
+    expect(fn!.fix).toContain("set search_path = ''");
+    expect(fn!.fixPrompt).toContain("public.note_count");
+  });
+  it("vulnerable fixture: the function finding is medium confidence, so hidden by default", () => {
+    const r = scan(join(D05, "vulnerable"), DEFAULT_CONFIG, RULES);
+    expect(d05(r).map((f) => f.line)).toEqual([10]);
+  });
+  it("fixed fixture: security_invoker view, and a function with search_path set and execute revoked", () => {
+    expect(atAnyConfidence(join(D05, "fixed")).all).toEqual([]);
+  });
+  it("decoy fixture: nothing flagged, and the seaworthy-ignore comment is honoured", () => {
+    const r = atAnyConfidence(join(D05, "decoy"));
+    expect(r.all).toEqual([]);
+    expect(r.suppressed).toEqual(["supabase/migrations/20260101000000_init.sql:38"]);
+  });
+
+  it("decoy: a view over a table with no RLS is SW-D01's finding", () => {
+    expect(run("create table tags (id int);\ncreate view tag_list as select * from tags;")).toEqual([]);
+  });
+  it("decoy: a view fixed by a later alter view, in any boolean spelling", () => {
+    const view = notes + "create view v as select * from notes;";
+    expect(run({ "supabase/migrations/1.sql": view, "supabase/migrations/2.sql": "alter view v set (security_invoker = true);" })).toEqual([]);
+    expect(run(view + "\nALTER VIEW IF EXISTS public.v SET (security_invoker=on);")).toEqual([]);
+    expect(run(view + "\nalter view v set (security_invoker);")).toEqual([]);
+  });
+  it("decoy: trigger functions, revoked functions, dropped views and other schemas", () => {
+    expect(run("create function t() returns trigger language plpgsql security definer as $$ begin return new; end $$;")).toEqual([]);
+    expect(
+      run("create function f() returns void language sql security definer as 'select 1';\nrevoke all on function f from public, anon, authenticated;"),
+    ).toEqual([]);
+    expect(run(notes + "create view v as select * from notes;\ndrop view v;")).toEqual([]);
+    expect(run(notes + "create view private.v as select * from notes;")).toEqual([]);
+    expect(run("create function private.f() returns void language sql security definer as 'select 1';")).toEqual([]);
+  });
+  it("decoy: seaworthy-ignore with a reason", () => {
+    expect(run(notes + "-- seaworthy-ignore SW-D05 aggregate counts only\ncreate view v as select count(*) from notes;")).toEqual([]);
+  });
+
+  it("fixed: security_invoker in the with clause, quoted or in upper case", () => {
+    expect(run(notes + "create view v with (security_invoker = true) as select * from notes;")).toEqual([]);
+    expect(run(notes + "CREATE VIEW \"public\".\"v\" WITH (security_barrier, SECURITY_INVOKER = 'true') AS SELECT * FROM \"public\".\"notes\";")).toEqual([]);
+  });
+  it("vulnerable: security_invoker = false, joins, comma lists and multi-line views", () => {
+    expect(run(notes + "create view v with (security_invoker = false) as select * from notes;")).toEqual(["1.sql:3 high"]);
+    expect(run(notes + "create table tags (id int);\ncreate view v as\n  select * from tags t\n  join notes n on n.id = t.id;")).toEqual(["1.sql:4 high"]);
+    expect(run(notes + "create table tags (id int);\ncreate or replace view v as select * from tags t, notes n;")).toEqual(["1.sql:4 high"]);
+  });
+  it("names every RLS table a view reads, including in subqueries, and RLS turned on in a later migration counts", () => {
+    const p = project({
+      ...supa,
+      "supabase/migrations/1.sql":
+        notes + "create table orders (id int);\ncreate view v as select * from orders o where o.id in (select id from notes);",
+      "supabase/migrations/2.sql": "alter table orders enable row level security;",
+    });
+    const r = atAnyConfidence(p.root);
+    p.done();
+    expect(r.findings.map((f) => f.title)).toEqual(["View public.v bypasses row-level security on public.orders and public.notes"]);
+    expect(r.findings[0]!.why).toContain("which have row-level security");
+  });
+  it("does not flag materialized views or temporary views (out of scope)", () => {
+    expect(run(notes + "create materialized view mv as select * from notes;\ncreate temp view tv as select * from notes;")).toEqual([]);
+  });
+  it("create or replace view without the option undoes an earlier alter view", () => {
+    const sql = notes + "create view v as select * from notes;\nalter view v set (security_invoker = true);\ncreate or replace view v as select id from notes;";
+    expect(run(sql)).toEqual(["1.sql:5 high"]);
+  });
+  it("is not fooled by table names in strings or comments", () => {
+    expect(run(notes + "create view v as select 'from notes' as label /* from notes */;")).toEqual([]);
+  });
+  it("a view the API roles can't read is not flagged", () => {
+    expect(run(notes + "create view v as select * from notes;\nrevoke all on v from anon, authenticated;")).toEqual([]);
+  });
+
+  it("vulnerable: revoking only from anon and authenticated leaves the default PUBLIC grant", () => {
+    const fn = "create function f() returns void language sql security definer as 'select 1';\n";
+    expect(run(fn + "revoke execute on function f() from anon, authenticated;")).toEqual(["1.sql:1 medium"]);
+    expect(run(fn + "revoke execute on function f() from public, anon, authenticated;\ngrant execute on function f() to anon;")).toEqual([
+      "1.sql:1 medium",
+    ]);
+  });
+  it("fixed: a later alter function set search_path, security invoker, or revoking execute on all functions", () => {
+    const fn = "create function public.f(a int, b numeric(10, 2)) returns void language sql security definer as 'select 1';\n";
+    expect(run(fn + "alter function public.f(int, numeric) set search_path = '';")).toEqual([]);
+    expect(run(fn + "alter function f security invoker;")).toEqual([]);
+    expect(run(fn + "revoke execute on all functions in schema public from public, anon, authenticated;")).toEqual([]);
+    expect(
+      run("alter default privileges in schema public revoke execute on functions from public, anon, authenticated;\n" + fn),
+    ).toEqual([]);
+  });
+  it("reads `supabase db dump` output: quoted trigger return type, search_path and view options", () => {
+    const sql = [
+      'CREATE TABLE IF NOT EXISTS "public"."notes" ("id" bigint NOT NULL, "user_id" "uuid" NOT NULL);',
+      'ALTER TABLE "public"."notes" ENABLE ROW LEVEL SECURITY;',
+      'CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"',
+      '    LANGUAGE "plpgsql" SECURITY DEFINER',
+      "    AS $$ begin return new; end; $$;",
+      'CREATE OR REPLACE FUNCTION "public"."count_notes"() RETURNS bigint',
+      '    LANGUAGE "sql" SECURITY DEFINER',
+      "    SET \"search_path\" TO ''",
+      "    AS $$ select count(*) from public.notes; $$;",
+      'CREATE OR REPLACE VIEW "public"."safe_notes" WITH ("security_invoker"=\'on\') AS',
+      ' SELECT "notes"."id"',
+      '   FROM "public"."notes";',
+      'CREATE OR REPLACE VIEW "public"."off_notes" WITH ("security_invoker"=\'off\') AS',
+      ' SELECT "notes"."id"',
+      '   FROM "public"."notes";',
+    ].join("\n");
+    expect(run({ "supabase/migrations/20240101000000_remote_schema.sql": sql })).toEqual(["20240101000000_remote_schema.sql:13 high"]);
+  });
+  it("follows renamed views and functions, and alter function reset search_path", () => {
+    expect(run(notes + "create view v as select * from notes;\nalter view v rename to w;\nalter view w set (security_invoker = on);")).toEqual([]);
+    const fn = "create function f() returns void language sql security definer set search_path = '' as 'select 1';\n";
+    expect(run(fn + "alter function f() rename to g;\nalter function g() reset search_path;")).toEqual(["1.sql:1 medium"]);
+  });
+  it("finds functions inside DO blocks and across lines, and ignores security definer in the body", () => {
+    expect(run("do $$ begin\n  create function f() returns int language sql security definer as 'select 1';\nend $$;")).toEqual(["1.sql:2 medium"]);
+    expect(run("create function f()\n  returns int\n  language plpgsql\n  security definer\nas $$ begin return 1; end $$;")).toEqual([
+      "1.sql:1 medium",
+    ]);
+    expect(run("create function f() returns text language sql as $$ select 'security definer' $$;")).toEqual([]);
+  });
+});
+
 describe("SW-S02 .env committed or not git-ignored", () => {
   /** Every finding for one rule at any confidence, as "file:line confidence". */
   const run = (files: Record<string, string>, rule = "SW-S02", setup?: (root: string) => void) => {

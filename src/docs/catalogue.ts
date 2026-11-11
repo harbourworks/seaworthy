@@ -20,7 +20,9 @@ export const COVERAGE: Record<string, string> = {
   "SW-D02": "Policies in Supabase SQL migrations or `supabase db dump` output whose `using` or `with check` is always true or only checks that someone is logged in.",
   "SW-D03": "Firestore security rules and Realtime Database JSON rules, found directly or through firebase.json.",
   "SW-D04": "Firebase Cloud Storage rules, and Supabase buckets made public in SQL (migrations and seed.sql), supabase/config.toml or createBucket/updateBucket calls. A public bucket whose name suggests private files (invoices, documents, ID scans) is high; one with a neutral name is medium, at medium confidence; buckets for images and avatars aren't flagged.",
-  "SW-P01": "Stripe webhook handlers that act on real Stripe event names without `constructEvent` or `events.retrieve`, in the file or a local helper it imports.",
+  "SW-D05":
+    "Views and functions in the public schema of Supabase SQL migrations, replayed in order. A view without `security_invoker = true` (in `with (...)` or a later `alter view ... set`) that reads from a table with RLS enabled is high; views over tables without RLS are left to SW-D01, and dropped views or views with access revoked from anon and authenticated aren't flagged. A `security definer` function with no `set search_path`, that isn't a trigger function and whose EXECUTE isn't revoked from public, anon and authenticated, is reported at medium confidence. Functions are matched by name, not by argument types. Materialized views aren't checked.",
+  "SW-P01":"Stripe webhook handlers that act on real Stripe event names without `constructEvent` or `events.retrieve`, in the file or a local helper it imports.",
   "SW-P02": "Amounts, prices and discounts in Stripe create and update calls that come from request input.",
   "SW-A01": "Next.js route handlers and server actions that change data or use an admin database client without checking who is calling.",
   "SW-A02": "Next.js handlers that read, change or delete a record by an ID from the request, through Supabase's admin client, Prisma or Drizzle, without an owner filter.",

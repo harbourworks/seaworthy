@@ -158,9 +158,10 @@ export function dollarBody(stmt: SqlStatement): { body: string; offset: number }
 /**
  * Returns `sql` with comments replaced by spaces, keeping every offset and newline. With
  * `blankLiterals`, the insides of strings, quoted identifiers and dollar-quoted bodies are
- * blanked too, so keyword and parenthesis searches only see real SQL structure.
+ * blanked too, so keyword and parenthesis searches only see real SQL structure. With
+ * `keepIdents` as well, quoted identifiers stay visible (`RETURNS "trigger"` in a dump).
  */
-export function maskSql(sql: string, blankLiterals: boolean): string {
+export function maskSql(sql: string, blankLiterals: boolean, keepIdents = false): string {
   const out = sql.split("");
   const blank = (from: number, to: number) => {
     for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
@@ -207,7 +208,7 @@ export function maskSql(sql: string, blankLiterals: boolean): string {
         }
         i++;
       }
-      if (blankLiterals) blank(s, Math.min(i, n));
+      if (blankLiterals && !(keepIdents && q === '"')) blank(s, Math.min(i, n));
       i++;
       continue;
     }

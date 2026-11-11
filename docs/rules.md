@@ -16,6 +16,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 | [SW-D02](#sw-d02) | Row-level security policy that allows everyone | high | Supabase |
 | [SW-D03](#sw-d03) | Firebase database rules open to everyone | critical | Firebase |
 | [SW-D04](#sw-d04) | Storage open to everyone | high | Firebase, Supabase |
+| [SW-D05](#sw-d05) | View or SECURITY DEFINER function bypasses row-level security | high | Supabase |
 | [SW-P01](#sw-p01) | Stripe webhook does not verify the signature | critical | Stripe |
 | [SW-P02](#sw-p02) | Price or amount taken from the client | high | Stripe |
 | [SW-A01](#sw-a01) | API route with no auth check | high | Next.js |
@@ -94,6 +95,14 @@ Firebase apps talk to Firestore and the Realtime Database straight from the brow
 Storage rules decide who can upload, download and delete files. With no condition, `if true` or test-mode rules, anyone can download every file (ID scans, invoices, private photos), overwrite them, or fill your bucket and your bill. Rules should tie files to the user who owns them. In Supabase, a bucket marked public serves every file to anyone with its URL, with no login at all: right for avatars, wrong for invoices or documents.
 
 **Checks:** Firebase Cloud Storage rules, and Supabase buckets made public in SQL (migrations and seed.sql), supabase/config.toml or createBucket/updateBucket calls. A public bucket whose name suggests private files (invoices, documents, ID scans) is high; one with a neutral name is medium, at medium confidence; buckets for images and avatars aren't flagged.
+
+## SW-D05
+
+**View or SECURITY DEFINER function bypasses row-level security** · high · runs on: Supabase
+
+A Postgres view runs with its owner's rights unless it is created with `security_invoker = true`, so row-level security on the tables it reads doesn't apply to callers. A view in the public schema is served by the Data API like a table, so anyone with your anon key can read every row through it. A `security definer` function also runs as its owner and skips RLS, and anyone with the anon key can call it at `/rest/v1/rpc/<name>`. Without `set search_path`, the names it uses are looked up on the caller's search path.
+
+**Checks:** Views and functions in the public schema of Supabase SQL migrations, replayed in order. A view without `security_invoker = true` (in `with (...)` or a later `alter view ... set`) that reads from a table with RLS enabled is high; views over tables without RLS are left to SW-D01, and dropped views or views with access revoked from anon and authenticated aren't flagged. A `security definer` function with no `set search_path`, that isn't a trigger function and whose EXECUTE isn't revoked from public, anon and authenticated, is reported at medium confidence. Functions are matched by name, not by argument types. Materialized views aren't checked.
 
 ## SW-P01
 
