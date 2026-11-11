@@ -62,18 +62,18 @@
     "docs:rules": "tsx scripts/docs.mts"
   },
   "dependencies": {
-    "@babel/parser": "7.26.3",
+    "@babel/parser": "7.29.13",
     "ignore": "6.0.2",
     "picocolors": "1.1.1"
   },
   "devDependencies": {
-    "@babel/types": "7.26.3",
+    "@babel/types": "7.29.11",
     "@modelcontextprotocol/sdk": "1.32.2",
-    "@types/node": "20.17.10",
-    "tsup": "8.3.5",
-    "tsx": "4.19.2",
-    "typescript": "5.6.3",
-    "vitest": "2.1.8",
+    "@types/node": "20.19.43",
+    "tsup": "8.5.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "2.1.9",
     "zod": "4.6.7"
   }
 }
