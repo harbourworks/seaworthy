@@ -53,8 +53,38 @@ export interface Policy {
   offset: number;
 }
 
+export interface ViewState {
+  schema: string;
+  name: string;
+  file: string;
+  /** Offset of the latest `create [or replace] view` statement. */
+  offset: number;
+  /** `security_invoker` is on, so the caller's RLS applies to the tables it reads. */
+  securityInvoker: boolean;
+  /** Keys (`schema.name`) of the relations named after FROM or JOIN in its query. */
+  sources: string[];
+  /** API roles had their privileges revoked, so the Data API cannot reach it. */
+  apiRevoked: boolean;
+}
+
+export interface FunctionState {
+  schema: string;
+  name: string;
+  file: string;
+  /** Offset of the latest `create [or replace] function` statement. */
+  offset: number;
+  securityDefiner: boolean;
+  /** The function pins its own `search_path` (`set search_path = …`). */
+  searchPath: boolean;
+  returnsTrigger: boolean;
+  /** Roles whose EXECUTE privilege was revoked (and not granted back). */
+  revoked: Set<string>;
+}
+
 export interface MigrationState {
   tables: Map<string, TableState>;
+  views: Map<string, ViewState>;
+  functions: Map<string, FunctionState>;
   files: string[];
 }
 
@@ -173,10 +203,145 @@ function ownerColumnsOf(stmt: SqlStatement): string[] {
 
 const REVOKE = new RegExp(String.raw`^revoke\s+.+?\s+on\s+(?:table\s+)?((?:${QNAME}\s*,\s*)*${QNAME})\s+from\s+(.+)$`, "i");
 
-/** Replays every migration in order and returns the final state of each table. */
+const CREATE_VIEW = new RegExp(
+  String.raw`^create\s+(?:or\s+replace\s+)?(temp\s+|temporary\s+)?(?:recursive\s+)?view\s+(${QNAME})`,
+  "i",
+);
+const ALTER_VIEW = new RegExp(
+  String.raw`^alter\s+view\s+(?:if\s+exists\s+)?(${QNAME})\s+(set\s*\(|reset\s*\(|rename\s+to\s+(${QNAME})|set\s+schema\s+(${IDENT}))`,
+  "i",
+);
+const DROP_VIEW = new RegExp(String.raw`^drop\s+view\s+(?:if\s+exists\s+)?((?:${QNAME}\s*,\s*)*${QNAME})`, "i");
+const CREATE_FUNCTION = new RegExp(String.raw`^create\s+(?:or\s+replace\s+)?function\s+(${QNAME})`, "i");
+const ALTER_FUNCTION = new RegExp(String.raw`^alter\s+function\s+(${QNAME})`, "i");
+const DROP_FUNCTION = /^drop\s+function\s+(?:if\s+exists\s+)?(.+?)(?:\s+(?:cascade|restrict))?$/i;
+const FUNCTION_PRIVILEGE =
+  /^(grant|revoke)\s+(?:grant\s+option\s+for\s+)?(.+?)\s+on\s+(?:(?:function|routine)\s+(.+?)|all\s+(?:functions|routines)\s+in\s+schema\s+(.+?))\s+(?:to|from)\s+(.+)$/i;
+const DEFAULT_PRIVILEGE =
+  /^alter\s+default\s+privileges\s+(?:for\s+(?:role|user)\s+.+?\s+)?(?:in\s+schema\s+(.+?)\s+)?(grant|revoke)\s+(?:grant\s+option\s+for\s+)?(.+?)\s+on\s+(?:functions|routines)\s+(?:to|from)\s+(.+)$/i;
+
+/** `security_invoker` in a view's option list: true or false if it is there, undefined if not. */
+function invokerOption(options: string): boolean | undefined {
+  const m = /\bsecurity_invoker\b"?\s*(?:=\s*['"]?([A-Za-z0-9_]+))?/i.exec(options);
+  if (!m) return undefined;
+  return !m[1] || /^(true|on|yes|1)$/i.test(m[1]);
+}
+
+/** Keys of the relations named after FROM or JOIN, including comma lists (`from a x, b y`). */
+function relationsRead(masked: string, commentless: string, from: number): string[] {
+  const out = new Set<string>();
+  const kw = /\b(?:from|join)\s+(?:only\s+)?/gi;
+  const rel = new RegExp(String.raw`(${QNAME})(?:\s+(?:as\s+)?${IDENT})?\s*(,\s*)?`, "y");
+  kw.lastIndex = from;
+  for (let m = kw.exec(masked); m; m = kw.exec(masked)) {
+    rel.lastIndex = m.index + m[0].length;
+    for (let r = rel.exec(commentless); r; r = rel.exec(commentless)) {
+      out.add(normaliseName(r[1]!).key);
+      if (!r[2]) break;
+    }
+  }
+  return [...out];
+}
+
+/** Reads a CREATE VIEW: its `security_invoker` option and the relations its query reads. */
+function viewParts(stmt: SqlStatement): { securityInvoker: boolean; sources: string[] } {
+  const masked = maskSql(stmt.raw, true);
+  const commentless = maskSql(stmt.raw, false);
+  const start = fromFirstToken(stmt, masked);
+  const head = CREATE_VIEW.exec(masked.slice(start));
+  if (!head) return { securityInvoker: false, sources: [] };
+  let i = start + head[0].length;
+  const skip = () => {
+    while (/\s/.test(masked[i] ?? "")) i++;
+  };
+  skip();
+  if (masked[i] === "(") {
+    const close = closingParen(masked, i); // column names
+    if (close < 0) return { securityInvoker: false, sources: [] };
+    i = close + 1;
+    skip();
+  }
+  let securityInvoker = false;
+  const w = /^with\s*\(/i.exec(masked.slice(i));
+  if (w) {
+    const open = i + w[0].length - 1;
+    const close = closingParen(masked, open);
+    if (close < 0) return { securityInvoker: false, sources: [] };
+    securityInvoker = invokerOption(commentless.slice(open + 1, close)) ?? false;
+    i = close + 1;
+  }
+  return { securityInvoker, sources: relationsRead(masked, commentless, i) };
+}
+
+/**
+ * The part of a CREATE or ALTER FUNCTION after the name and argument list, with strings and
+ * bodies blanked so `security definer` inside a body doesn't count. Quoted identifiers stay,
+ * because `supabase db dump` writes `RETURNS "trigger"` and `SET "search_path" TO ''`.
+ */
+function functionRest(stmt: SqlStatement, head: RegExp): string | null {
+  const masked = maskSql(stmt.raw, true, true);
+  const start = fromFirstToken(stmt, masked);
+  const m = head.exec(masked.slice(start));
+  if (!m) return null;
+  let i = start + m[0].length;
+  while (/\s/.test(masked[i] ?? "")) i++;
+  if (masked[i] === "(") {
+    const close = closingParen(masked, i);
+    if (close < 0) return null;
+    i = close + 1;
+  }
+  return masked.slice(i).replace(/\s+/g, " ").trim();
+}
+
+const SETS_SEARCH_PATH = /\bset\s+"?search_path\b/i;
+
+function lastSecurity(rest: string): "definer" | "invoker" | undefined {
+  const all = [...rest.matchAll(/\bsecurity\s+(definer|invoker)\b/gi)];
+  return all.at(-1)?.[1]?.toLowerCase() as "definer" | "invoker" | undefined;
+}
+
+/** Function keys in `f(int, numeric(10, 2)), g`, with the argument lists removed. */
+function functionNames(list: string): string[] {
+  let s = list;
+  for (let prev = ""; prev !== s; ) (prev = s), (s = s.replace(/\([^()]*\)/g, ""));
+  return s
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => normaliseName(p).key);
+}
+
+function roleList(s: string): string[] {
+  return s
+    .replace(/\s+granted\s+by\s+.+$/i, "")
+    .replace(/\s+(?:cascade|restrict)$/i, "")
+    .split(",")
+    .map(normaliseIdent)
+    .filter((r) => r.length > 0);
+}
+
+/** File offset of the statement's own first token, past a DO block's `begin`. */
+function tokenOffset(stmt: SqlStatement): number {
+  return stmt.rawOffset + fromFirstToken(stmt, maskSql(stmt.raw, true));
+}
+
+function rekey<T extends { schema: string; name: string }>(map: Map<string, T>, key: string, schema: string, name: string) {
+  const item = map.get(key);
+  if (!item) return;
+  map.delete(key);
+  item.schema = schema;
+  item.name = name;
+  map.set(`${schema}.${name}`, item);
+}
+
+/** Replays every migration in order and returns the final state of each table, view and function. */
 export function replayMigrations(project: ProjectFiles): MigrationState {
   const tables = new Map<string, TableState>();
+  const views = new Map<string, ViewState>();
+  const functions = new Map<string, FunctionState>();
   const revoked = new Map<string, Set<string>>();
+  /** EXECUTE revoked by `alter default privileges`, by schema ("*" for every schema). */
+  const defaultRevoked = new Map<string, Set<string>>();
   const files = migrationFiles(project);
 
   const apply = (stmt: SqlStatement, file: string) => {
@@ -187,6 +352,86 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
     if (/^do\b/i.test(t)) {
       const body = dollarBody(stmt);
       if (body) for (const inner of splitStatements(body.body, body.offset)) apply(inner, file);
+      return;
+    }
+    if ((m = CREATE_VIEW.exec(t))) {
+      if (m[1]) return; // temporary views live in a session's own schema
+      const { schema, name, key } = normaliseName(m[2]!);
+      // CREATE OR REPLACE VIEW replaces the options too, so an earlier ALTER VIEW SET is lost.
+      views.set(key, { schema, name, file, offset: tokenOffset(stmt), ...viewParts(stmt), apiRevoked: false });
+      return;
+    }
+    if ((m = ALTER_VIEW.exec(t))) {
+      const from = normaliseName(m[1]!);
+      const view = views.get(from.key);
+      if (!view) return;
+      if (m[3]) rekey(views, from.key, view.schema, normaliseName(m[3]).name);
+      else if (m[4]) rekey(views, from.key, normaliseIdent(m[4]), view.name);
+      else {
+        const opt = invokerOption(t.slice(m.index + m[0].length));
+        if (opt !== undefined) view.securityInvoker = /^set/i.test(m[2]!) ? opt : false;
+      }
+      return;
+    }
+    if ((m = DROP_VIEW.exec(t))) {
+      for (const part of m[1]!.split(",")) views.delete(normaliseName(part.trim()).key);
+      return;
+    }
+    if ((m = CREATE_FUNCTION.exec(t))) {
+      const { schema, name, key } = normaliseName(m[1]!);
+      const rest = functionRest(stmt, CREATE_FUNCTION);
+      if (rest === null) return;
+      // CREATE OR REPLACE keeps the function's privileges; a new function starts from the defaults.
+      const revokedNow = functions.get(key)?.revoked ?? new Set([...(defaultRevoked.get("*") ?? []), ...(defaultRevoked.get(schema) ?? [])]);
+      functions.set(key, {
+        schema,
+        name,
+        file,
+        offset: tokenOffset(stmt),
+        securityDefiner: lastSecurity(rest) === "definer",
+        searchPath: SETS_SEARCH_PATH.test(rest),
+        returnsTrigger: /\breturns\s+"?(?:trigger|event_trigger)\b/i.test(rest),
+        revoked: revokedNow,
+      });
+      return;
+    }
+    if ((m = ALTER_FUNCTION.exec(t))) {
+      const from = normaliseName(m[1]!);
+      const fn = functions.get(from.key);
+      const rest = fn ? functionRest(stmt, ALTER_FUNCTION) : null;
+      if (!fn || rest === null) return;
+      const security = lastSecurity(rest);
+      if (security) fn.securityDefiner = security === "definer";
+      if (SETS_SEARCH_PATH.test(rest)) fn.searchPath = true;
+      if (/\breset\s+(?:"?search_path\b|all\b)/i.test(rest)) fn.searchPath = false;
+      const rename = new RegExp(String.raw`^rename\s+to\s+(${IDENT})`, "i").exec(rest);
+      const move = new RegExp(String.raw`^set\s+schema\s+(${IDENT})`, "i").exec(rest);
+      if (rename) rekey(functions, from.key, fn.schema, normaliseIdent(rename[1]!));
+      if (move) rekey(functions, from.key, normaliseIdent(move[1]!), fn.name);
+      return;
+    }
+    if ((m = DROP_FUNCTION.exec(t))) {
+      for (const key of functionNames(m[1]!)) functions.delete(key);
+      return;
+    }
+    if ((m = FUNCTION_PRIVILEGE.exec(t))) {
+      if (!/\b(?:execute|all)\b/i.test(m[2]!)) return;
+      const schemas = m[4]?.split(",").map(normaliseIdent);
+      const targets = m[3]
+        ? functionNames(m[3]).flatMap((k) => functions.get(k) ?? [])
+        : [...functions.values()].filter((f) => schemas!.includes(f.schema));
+      const revoke = m[1]!.toLowerCase() === "revoke";
+      for (const fn of targets) for (const role of roleList(m[5]!)) revoke ? fn.revoked.add(role) : fn.revoked.delete(role);
+      return;
+    }
+    if ((m = DEFAULT_PRIVILEGE.exec(t))) {
+      if (!/\b(?:execute|all)\b/i.test(m[3]!)) return;
+      const revoke = m[2]!.toLowerCase() === "revoke";
+      for (const schema of m[1] ? m[1].split(",").map(normaliseIdent) : ["*"]) {
+        const set = defaultRevoked.get(schema) ?? new Set<string>();
+        for (const role of roleList(m[4]!)) revoke ? set.add(role) : set.delete(role);
+        defaultRevoked.set(schema, set);
+      }
       return;
     }
     if ((m = CREATE_TABLE.exec(t))) {
@@ -318,5 +563,9 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
     const r = revoked.get(key);
     tbl.apiRevoked = !!r && r.has("anon") && r.has("authenticated");
   }
-  return { tables, files };
+  for (const [key, view] of views) {
+    const r = revoked.get(key);
+    view.apiRevoked = !!r && r.has("anon") && r.has("authenticated");
+  }
+  return { tables, views, functions, files };
 }
