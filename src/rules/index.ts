@@ -22,8 +22,9 @@ import { l01PromptInjection } from "./llm/l01-prompt-injection.js";
 import { l02ModelOutputSink } from "./llm/l02-model-output-sink.js";
 import { l03DangerousAgentTool } from "./llm/l03-dangerous-agent-tool.js";
 import { l04McpConfig } from "./llm/l04-mcp-config.js";
+import { l05McpAutoApprove } from "./llm/l05-mcp-auto-approve.js";
 
-export const RULES: Rule[] = [s01CommittedSecrets, s02EnvCommitted, s03SecretInBrowser, s04LlmKeyInClient, d01RlsMissing, d02PolicyAllowsAll, d03FirebaseOpen, d04StorageOpen, d05RlsBypass, p01WebhookUnverified, p02ClientPrice, a01NoAuthCheck, a02NoOwnershipCheck, a03NoRateLimit, a04WildcardCors, a05SqlInjection, l01PromptInjection, l02ModelOutputSink, l03DangerousAgentTool, l04McpConfig, x01VulnerableDeps, x02UnknownPackage, b01SecurityHeaders];
+export const RULES: Rule[] = [s01CommittedSecrets, s02EnvCommitted, s03SecretInBrowser, s04LlmKeyInClient, d01RlsMissing, d02PolicyAllowsAll, d03FirebaseOpen, d04StorageOpen, d05RlsBypass, p01WebhookUnverified, p02ClientPrice, a01NoAuthCheck, a02NoOwnershipCheck, a03NoRateLimit, a04WildcardCors, a05SqlInjection, l01PromptInjection, l02ModelOutputSink, l03DangerousAgentTool, l04McpConfig, l05McpAutoApprove, x01VulnerableDeps, x02UnknownPackage, b01SecurityHeaders];
 
 export function findRule(id: string): Rule | undefined {
   const want = id.trim().toUpperCase();

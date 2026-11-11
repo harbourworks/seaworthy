@@ -1,0 +1,10 @@
+{
+  // Keep "enableAllProjectMcpServers": true out of this file: approve servers one by one.
+  "permissions": {
+    "deny": ["Read(./.env)"]
+  },
+  "env": {
+    "SETUP_NOTE": "enableAllProjectMcpServers: true is not used here"
+  },
+  "enabledMcpjsonServers": ["github", "local"]
+}

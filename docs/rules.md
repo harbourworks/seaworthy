@@ -4,7 +4,7 @@
 
 Every rule Seaworthy runs, with what it reads and where it stops. A rule only runs when its stack is detected. Run `npx seaworthy-cli explain <ID>` for an example of the problem and the fix.
 
-**What Seaworthy reads:** JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03).
+**What Seaworthy reads:** JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, Claude Code project settings, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03).
 
 | ID | Rule | Severity | Runs on |
 | --- | --- | --- | --- |
@@ -28,6 +28,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 | [SW-L02](#sw-l02) | Model output rendered as HTML or run as code | high | Any project |
 | [SW-L03](#sw-l03) | Agent tool with shell, file or code access and no guard | high | Any project |
 | [SW-L04](#sw-l04) | MCP server config with secrets in plain text or no authentication | high | MCP |
+| [SW-L05](#sw-l05) | MCP servers approved automatically or launched through a shell | medium | Any project |
 | [SW-X01](#sw-x01) | Dependency with known vulnerabilities | high | Any project |
 | [SW-X02](#sw-x02) | Dependency that isn't on npm, or is brand new | high | Any project |
 | [SW-B01](#sw-b01) | Missing security headers | low | Next.js |
@@ -191,6 +192,14 @@ When you give a model a tool that runs shell commands, deletes files or executes
 MCP config files tell your AI coding tool which servers to start and connect to. They are easy to commit by accident, and anything written in them is readable by every tool and teammate that sees the repo. Keep secrets in environment variables, and never connect to a remote MCP server over plain HTTP or without authentication: whoever reaches it can drive the tools behind it.
 
 **Checks:** MCP configs (`.cursor/mcp.json`, `.mcp.json`, `.vscode/mcp.json`, `claude_desktop_config.json`, Windsurf) with secrets written in, or remote servers over plain HTTP or with no auth header.
+
+## SW-L05
+
+**MCP servers approved automatically or launched through a shell** · medium · runs on: Any project
+
+An MCP server in a project config is a command that your AI coding tool runs on your machine. Claude Code asks before starting the servers in a repo's .mcp.json, unless `enableAllProjectMcpServers` is turned on in .claude/settings.json; then, once you trust the folder, whoever can change .mcp.json, in a pull request or a branch you check out, chooses a command that runs for everyone who opens the repo. Servers launched through a shell (`bash -c`, `cmd /c`, `powershell -Command`) are hard to review, and `curl ... | sh` runs whatever the URL serves that day.
+
+**Checks:** `enableAllProjectMcpServers: true` in Claude Code's `.claude/settings.json` or `.claude/settings.local.json` (any folder; comments allowed), reported even before the repo has an .mcp.json. In the MCP configs SW-L04 reads, stdio servers whose launch line pipes a download into a shell (`curl` or `wget ... | sh`, `irm ... | iex`) are low severity; servers started through `bash`, `sh`, `zsh`, `cmd`, `powershell` or `pwsh` (directly or through `env`) with a run-a-command flag (`-c`, `/c`, `-Command`, `-enc`) are low severity at medium confidence. `cmd /c` that only starts one program (the usual way to run npx on Windows), shells running a script file, and unpinned `npx` or `uvx` packages aren't flagged, and other tools' trust-all settings aren't checked.
 
 ## SW-X01
 
