@@ -1,0 +1,7 @@
+{
+  "name": "sw-s04-decoy",
+  "private": true,
+  "dependencies": {
+    "openai": "4.77.0"
+  }
+}

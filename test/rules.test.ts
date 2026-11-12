@@ -750,6 +750,41 @@ describe("SW-S04 LLM provider key in client-side code", () => {
       }).titles,
     ).toEqual(["Groq key read from public variable VITE_GROQ_API_KEY", "LLM SDK told to run in the browser (dangerouslyAllowBrowser)"]);
   });
+
+  describe("in files with class accessor fields", () => {
+    const S04 = resolve(__dirname, "../fixtures/rules/sw-s04");
+    const at = (root: string) =>
+      scan(root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES).findings.filter((f) => f.ruleId === "SW-S04");
+
+    it("vulnerable fixture: flags dangerouslyAllowBrowser: true at its own line", () => {
+      const f = at(join(S04, "vulnerable"));
+      expect(f.map((x) => `${x.file}:${x.line}:${x.column} ${x.confidence}`)).toEqual(["lib/chat-store.ts:10:3 high"]);
+      expect(f[0]!.title).toBe("LLM SDK told to run in the browser (dangerouslyAllowBrowser)");
+      expect(f[0]!.fix).toMatch(/^Remove `dangerouslyAllowBrowser`\. /);
+      expect(f[0]!.fixPrompt).toMatch(/^In lib\/chat-store\.ts, an LLM SDK client is created with dangerouslyAllowBrowser: true\. /);
+    });
+    it("fixed fixture: nothing flagged", () => expect(at(join(S04, "fixed"))).toEqual([]));
+    it("decoy fixture: type members named dangerouslyAllowBrowser are not flagged", () => {
+      expect(at(join(S04, "decoy"))).toEqual([]);
+    });
+    it("variations: a type alias member and a quoted key", () => {
+      const cls = "class Store {\n  static accessor busy = false;\n}\n";
+      expect(run({ "lib/a.ts": cls + "type O = { 'dangerouslyAllowBrowser': boolean };\n" }).all).toEqual([]);
+      expect(
+        run({ "lib/a.ts": cls + "const c = new OpenAI({ 'dangerouslyAllowBrowser': true });\n" }).all,
+      ).toEqual(["lib/a.ts:4 high"]);
+    });
+    it("variations: an abstract accessor in .mts and a props interface in a client .tsx", () => {
+      expect(
+        run({
+          "src/base.mts": "abstract class Base {\n  abstract accessor id: string;\n  declare dangerouslyAllowBrowser: boolean;\n}\n",
+          "src/Chat.tsx":
+            '"use client";\ninterface Props { dangerouslyAllowBrowser: boolean }\nclass S { accessor n: number = 0 }\n' +
+            'export function Chat(p: Props) { return <p>{p.dangerouslyAllowBrowser ? "on" : "off"}</p>; }\n',
+        }).all,
+      ).toEqual([]);
+    });
+  });
 });
 
 describe("SW-D03 and SW-D04 Firebase rules open to everyone", () => {
