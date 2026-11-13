@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: harbourworks/seaworthy@v0.6.0
+      - uses: harbourworks/seaworthy@v0.7.0
         with:
           fail-on: high # optional; defaults to seaworthy.config.json, then high
           # licence: ${{ secrets.SEAWORTHY_LICENCE }} # Pro or Agency, optional

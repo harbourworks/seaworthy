@@ -2,6 +2,13 @@
 
 All notable changes to seaworthy-cli. Versions follow [semantic versioning](https://semver.org); while it's 0.x, a minor version can change behaviour.
 
+## 0.7.0 (13 November 2026)
+
+Two new checks, for Supabase and for MCP servers in Claude Code projects.
+
+- **SW-D05:** Supabase views that bypass row-level security. A view in the public schema without `security_invoker = true` that reads a table with RLS on is reported as high, because anyone with your anon key can read every row through it. `security definer` functions with no `set search_path` that the API roles can still call are reported too, at medium confidence (shown with `--min-confidence medium`).
+- **SW-L05:** MCP servers that start without asking or run through a shell. `"enableAllProjectMcpServers": true` in `.claude/settings.json` or `.claude/settings.local.json` is reported as medium, even before the repo has an `.mcp.json`. MCP servers that pipe a download into a shell (`curl ... | sh`, `irm ... | iex`) are reported as low. Other servers started with `bash -c`, `cmd /c` or `powershell -Command` are reported as low at medium confidence; `cmd /c` that only starts one program, the usual way to run npx on Windows, isn't. Seaworthy now reads Claude Code project settings files for this.
+
 ## 0.6.0 (10 November 2026)
 
 Every check in the v1 plan is now built.
