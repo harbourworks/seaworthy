@@ -4,10 +4,11 @@ import type { Node } from "@babel/types";
 /** JavaScript and TypeScript files Babel can parse directly. */
 export const JS_FILE_RE = /\.(?:[cm]?[jt]sx?)$/;
 
+/** `decoratorAutoAccessors` lets class fields like `accessor count = 0` parse; it isn't on by default. */
 function pluginsFor(file: string): ParserPlugin[] {
-  if (/\.[cm]?ts$/.test(file)) return ["typescript"];
-  if (/\.tsx$/.test(file)) return ["typescript", "jsx"];
-  return ["jsx"];
+  if (/\.[cm]?ts$/.test(file)) return ["typescript", "decoratorAutoAccessors"];
+  if (/\.tsx$/.test(file)) return ["typescript", "jsx", "decoratorAutoAccessors"];
+  return ["jsx", "decoratorAutoAccessors"];
 }
 
 /**
