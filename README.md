@@ -91,10 +91,13 @@ Configure a project with `seaworthy.config.json`:
 
 ## Privacy
 
-Seaworthy reads your files locally and never sends code, findings or file names anywhere. Two things use the network, and both are optional:
+Seaworthy reads your files locally and never sends code, findings or file names anywhere. Three things use the network, and all are optional:
 
-- **The dependency check** sends package names and versions (nothing else) to [osv.dev](https://osv.dev). `--offline` skips it.
+- **The vulnerability check** (SW-X01) sends package names and versions (nothing else) to [osv.dev](https://osv.dev).
+- **The package-name check** (SW-X02) sends package names only (no versions) to the public npm registry, registry.npmjs.org, as `npm install` would. It skips packages that come from a private registry set in `.npmrc` (all of them, or a scope), your project's own workspace packages, and dependencies installed from a local path, workspace, git or URL.
 - **A paid licence** is checked against the licence server at most once a day, sending the key and a machine name. The free version never does this.
+
+`--offline` skips both dependency lookups.
 
 ## Plans
 

@@ -37,7 +37,7 @@ Node 20 or later. No install needed; `npm i -D seaworthy-cli` pins a version if 
 | `--fail-on critical\|high\|medium\|low` | Exit 1 when a finding is at or above this severity. Default `high`. |
 | `--min-confidence high\|medium\|low` | Hide findings below this confidence. Default `high`. |
 | `--config <file>` | Config file. Default `./seaworthy.config.json`. |
-| `--offline` | Make no network calls at all (skips the dependency check) |
+| `--offline` | Make no network calls at all (skips both dependency lookups: OSV and the npm registry) |
 | `--baseline <ref>` | Report only findings that are new since a git ref, such as `origin/main` (Pro) |
 | `--all` | Scan every project in a folder, one combined report (Agency) |
 | `--notify` | Send an alert to Slack, a webhook or email (Pro; see below) |
@@ -133,4 +133,4 @@ Two options, both opt-in:
 
 ## Privacy
 
-Seaworthy reads your files locally and never uploads code, findings or file names. Two things can use the network: the dependency check sends package names and versions to osv.dev (skip it with `--offline`), and a paid licence is checked with the licence server at most once a day (key, machine name and licence IDs only). There is no telemetry.
+Seaworthy reads your files locally and never uploads code, findings or file names. Three things can use the network: the vulnerability check (SW-X01) sends package names and versions to osv.dev; the package-name check (SW-X02) sends package names only to the public npm registry (registry.npmjs.org), skipping packages from a private registry set in `.npmrc` (all of them, or a scope), the project's own workspace packages, and dependencies installed from a local path, workspace, git or URL; and a paid licence is checked with the licence server at most once a day (key, machine name and licence IDs only). `--offline` skips both dependency lookups. There is no telemetry.
