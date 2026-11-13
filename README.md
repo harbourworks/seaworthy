@@ -13,7 +13,7 @@ npx seaworthy-cli
 No account, no install, no upload. Node 20 or later.
 
 ```
-  Seaworthy 0.6.0  ·  notes-app  ·  Next.js, React, Supabase, Stripe
+  Seaworthy 0.7.0  ·  notes-app  ·  Next.js, React, Supabase, Stripe
   42 files, 22 rules, 180 ms. Your code never left this machine.
 
   ✖ Not seaworthy: 3 critical, 2 high
