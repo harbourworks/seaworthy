@@ -2,6 +2,10 @@
 
 All notable changes to seaworthy-cli. Versions follow [semantic versioning](https://semver.org); while it's 0.x, a minor version can change behaviour.
 
+## 0.7.1 (14 November 2026)
+
+- **Class `accessor` fields:** JavaScript and TypeScript files with fields like `accessor count = 0` are now read as code instead of being skipped or text-matched. SW-S04 no longer flags `dangerouslyAllowBrowser` in type declarations or set to `false` in these files, and the API route, Stripe checkout price, SQL, prompt and agent-tool checks now cover them, so a problem in such a file that was missed before can now be reported. Fields with a decorator (`@observable accessor busy = false`) are still text-matched.
+
 ## 0.7.0 (13 November 2026)
 
 Two new checks, for Supabase and for MCP servers in Claude Code projects.
