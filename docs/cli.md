@@ -42,6 +42,9 @@ Node 20 or later. No install needed; `npm i -D seaworthy-cli` pins a version if 
 | `--all` | Scan every project in a folder, one combined report (Agency) |
 | `--notify` | Send an alert to Slack, a webhook or email (Pro; see below) |
 | `--notify-on new\|failing\|always` | When to alert. Default `new`: only when problems at or above `--fail-on` appear that weren't in the last scan |
+| `--no-history` | Don't record this scan in history |
+| `--from <scan#> --to <scan#>` | With `seaworthy compare`: pick the two scans to compare (default: the last two). Run `seaworthy history` to see the numbers. |
+| `--yes`, `-y` | With `init --agent`: add the rules-file step without asking first |
 
 ## Exit codes
 
