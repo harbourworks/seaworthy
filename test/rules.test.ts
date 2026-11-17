@@ -751,6 +751,59 @@ describe("SW-S04 LLM provider key in client-side code", () => {
     ).toEqual(["Groq key read from public variable VITE_GROQ_API_KEY", "LLM SDK told to run in the browser (dangerouslyAllowBrowser)"]);
   });
 
+  describe("in Vue and Svelte files (text matching)", () => {
+    const S04 = resolve(__dirname, "../fixtures/rules/sw-s04");
+    const oai = { "package.json": JSON.stringify({ dependencies: { openai: "4.77.0" } }) };
+    const flags = (files: Record<string, string>) => {
+      const p = project({ ...oai, ...files });
+      const all = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+      p.done();
+      return all.findings
+        .filter((f) => f.ruleId === "SW-S04")
+        .map((f) => `${f.file}:${f.line}:${f.column} ${f.confidence} ${f.title}`)
+        .sort();
+    };
+    const vue = (opts: string) =>
+      `<script setup lang="ts">\nimport OpenAI from "openai";\nconst client = new OpenAI({ ${opts} });\n</script>\n`;
+    const svelte = (opts: string) =>
+      `<script lang="ts">\n  import OpenAI from "openai";\n  const client = new OpenAI({ ${opts} });\n</script>\n`;
+    const MSG = "high LLM SDK told to run in the browser (dangerouslyAllowBrowser)";
+
+    it("Vue decoy fixture: an explicit false is not flagged", () => {
+      const f = scan(join(S04, "decoy-vue"), { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES).findings;
+      expect(f.filter((x) => x.ruleId === "SW-S04")).toEqual([]);
+    });
+    it("false is not flagged, however it is spaced", () => {
+      expect(
+        flags({
+          "src/A.vue": vue('apiKey: "x", dangerouslyAllowBrowser: false'),
+          "src/B.vue": vue('apiKey: "x", dangerouslyAllowBrowser:false'),
+          "src/C.svelte": svelte("dangerouslyAllowBrowser :  false"),
+          "src/D.svelte": svelte("dangerouslyAllowBrowser:\n    false"),
+        }),
+      ).toEqual([]);
+    });
+    it("true is flagged in Vue and Svelte, with or without a space after the colon", () => {
+      expect(
+        flags({
+          "src/A.vue": vue('apiKey: "x", dangerouslyAllowBrowser: true'),
+          "src/B.vue": vue('apiKey: "x", dangerouslyAllowBrowser:true'),
+          "src/C.svelte": svelte("dangerouslyAllowBrowser: true"),
+          "src/D.svelte": svelte("dangerouslyAllowBrowser:true"),
+        }),
+      ).toEqual([`src/A.vue:3:42 ${MSG}`, `src/B.vue:3:42 ${MSG}`, `src/C.svelte:3:31 ${MSG}`, `src/D.svelte:3:31 ${MSG}`]);
+    });
+    it("anything but false is flagged: a variable, a name starting with false, an expression", () => {
+      expect(
+        flags({
+          "src/A.vue": vue("dangerouslyAllowBrowser: isDev"),
+          "src/B.vue": vue("dangerouslyAllowBrowser:falsey"),
+          "src/C.svelte": svelte("dangerouslyAllowBrowser: !false"),
+        }),
+      ).toEqual([`src/A.vue:3:29 ${MSG}`, `src/B.vue:3:29 ${MSG}`, `src/C.svelte:3:31 ${MSG}`]);
+    });
+  });
+
   describe("in files with class accessor fields", () => {
     const S04 = resolve(__dirname, "../fixtures/rules/sw-s04");
     const at = (root: string) =>
