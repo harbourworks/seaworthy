@@ -1,0 +1,8 @@
+{
+  "name": "sw-x02-vulnerable",
+  "private": true,
+  "dependencies": {
+    "react": "18.3.1",
+    "react-markdown-safe-html": "0.4.1"
+  }
+}
