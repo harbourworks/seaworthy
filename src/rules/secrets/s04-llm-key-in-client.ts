@@ -174,7 +174,8 @@ function allowBrowserFlags(file: string, text: string): number[] {
   }
   const out: number[] = [];
   for (const [base, code] of codeRegions(file, text)) {
-    for (const m of code.matchAll(/\bdangerouslyAllowBrowser\s*:\s*(?!false\b)/g)) {
+    // `\S` makes `\s*` take all the whitespace, so the lookahead sees the value, not a space before it.
+    for (const m of code.matchAll(/\bdangerouslyAllowBrowser\s*:\s*(?!false\b)\S/g)) {
       if (inCode(code, m.index!)) out.push(base + m.index!);
     }
   }
