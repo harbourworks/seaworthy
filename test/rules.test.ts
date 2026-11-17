@@ -785,6 +785,43 @@ describe("SW-S04 LLM provider key in client-side code", () => {
       ).toEqual([]);
     });
   });
+
+  describe("in files with decorators", () => {
+    const anthropic = { "package.json": JSON.stringify({ dependencies: { "@anthropic-ai/sdk": "0.32.1" } }) };
+    const store = "class Settings { @observable accessor busy = false; }\n";
+
+    it("issue #25 reproduction: an interface member next to a decorated accessor is not flagged", () => {
+      expect(run({ ...anthropic, "src/store.ts": store + "export interface Opts { dangerouslyAllowBrowser: boolean }\n" }).all).toEqual([]);
+    });
+    it("decoy fixture: the decorated settings class is not flagged", () => {
+      const f = scan(resolve(__dirname, "../fixtures/rules/sw-s04/decoy"), { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+      expect(f.findings.filter((x) => x.ruleId === "SW-S04")).toEqual([]);
+    });
+    it("a real dangerouslyAllowBrowser: true in a file with a decorated class is still flagged, at its own line", () => {
+      const r = run({
+        ...anthropic,
+        "src/store.ts":
+          'import Anthropic from "@anthropic-ai/sdk";\n' +
+          store +
+          "export interface Opts { dangerouslyAllowBrowser: boolean }\n" +
+          "export const client = new Anthropic({ apiKey: 'set-at-runtime', dangerouslyAllowBrowser: true });\n",
+      });
+      expect(r.all).toEqual(["src/store.ts:4 high"]);
+      expect(r.titles).toEqual(["LLM SDK told to run in the browser (dangerouslyAllowBrowser)"]);
+    });
+    it("variations: an Angular component, and `export @dec class` in a client .tsx", () => {
+      expect(
+        run({
+          "src/app/chat.component.ts":
+            "@Component({ selector: 'app-chat' })\nexport class ChatComponent {\n  @Input() dangerouslyAllowBrowser: boolean = false;\n" +
+            "  constructor(@Inject(API) private api: Api) {}\n}\ninterface Opts { dangerouslyAllowBrowser: boolean }\n",
+          "src/Chat.tsx":
+            '"use client";\nexport @observer class Chat { @observable accessor on = false }\n' +
+            "type Props = { dangerouslyAllowBrowser?: boolean };\nexport const C = (p: Props) => <p>{String(p.dangerouslyAllowBrowser)}</p>;\n",
+        }).all,
+      ).toEqual([]);
+    });
+  });
 });
 
 describe("SW-D03 and SW-D04 Firebase rules open to everyone", () => {
