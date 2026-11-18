@@ -4,30 +4,45 @@ import type { Node } from "@babel/types";
 /** JavaScript and TypeScript files Babel can parse directly. */
 export const JS_FILE_RE = /\.(?:[cm]?[jt]sx?)$/;
 
-/** `decoratorAutoAccessors` lets class fields like `accessor count = 0` parse; it isn't on by default. */
+/** Babel's syntax plugins for a file's extension, before any decorators plugin is added. */
 function pluginsFor(file: string): ParserPlugin[] {
-  if (/\.[cm]?ts$/.test(file)) return ["typescript", "decoratorAutoAccessors"];
-  if (/\.tsx$/.test(file)) return ["typescript", "jsx", "decoratorAutoAccessors"];
-  return ["jsx", "decoratorAutoAccessors"];
+  if (/\.[cm]?ts$/.test(file)) return ["typescript"];
+  if (/\.tsx$/.test(file)) return ["typescript", "jsx"];
+  return ["jsx"];
 }
 
 /**
+ * Decorators need one of two Babel plugins, and they can't be combined. `decorators-legacy` is
+ * TypeScript's `experimentalDecorators` style (Angular, NestJS, MobX), including parameter
+ * decorators; `decorators` is the standard one, which also allows `export @dec class`. Both take
+ * `decoratorAutoAccessors` so `accessor count = 0` and `@observable accessor busy` parse.
+ */
+const DECORATOR_PLUGINS: ParserPlugin[][] = [
+  ["decorators-legacy", "decoratorAutoAccessors"],
+  ["decorators", "decoratorAutoAccessors"],
+];
+
+/**
  * Parses a JS or TS file, tolerating errors so one odd line doesn't hide a whole file.
+ * Tries legacy decorators first, then standard ones.
  * Returns null when Babel can't make sense of it at all; callers fall back to text matching.
  */
 export function parseJs(file: string, text: string): Node | null {
-  try {
-    return parse(text, {
-      sourceType: "unambiguous",
-      plugins: pluginsFor(file),
-      errorRecovery: true,
-      allowReturnOutsideFunction: true,
-      allowImportExportEverywhere: true,
-      allowAwaitOutsideFunction: true,
-    }).program;
-  } catch {
-    return null;
+  for (const decorators of DECORATOR_PLUGINS) {
+    try {
+      return parse(text, {
+        sourceType: "unambiguous",
+        plugins: [...pluginsFor(file), ...decorators],
+        errorRecovery: true,
+        allowReturnOutsideFunction: true,
+        allowImportExportEverywhere: true,
+        allowAwaitOutsideFunction: true,
+      }).program;
+    } catch {
+      // try the next decorators plugin
+    }
   }
+  return null;
 }
 
 /** Visits every node depth-first. Return false from `visit` to skip a node's children. */
