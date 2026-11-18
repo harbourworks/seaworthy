@@ -1,0 +1,19 @@
+{
+  "name": "sw-x02-decoy",
+  "private": true,
+  "dependencies": {
+    "react": "18.3.1",
+    "file-lib": "file:../lib",
+    "git-lib": "github:someuser/git-lib",
+    "url-lib": "https://example.invalid/url-lib.tgz",
+    "sibling-lib": "../lib",
+    "nested-lib": "./packages/nested-lib",
+    "abs-lib": "/opt/libs/abs-lib",
+    "home-lib": "~/code/home-lib",
+    "dot-lib": ".",
+    "parent-lib": "..",
+    "fork-lib": "someuser/fork-lib",
+    "pinned-fork": "some-user/pinned.fork#v1.2.0",
+    "branch-fork": "some_user/branch-fork#semver:^2.0.0"
+  }
+}

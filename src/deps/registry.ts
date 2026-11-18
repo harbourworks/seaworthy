@@ -4,7 +4,8 @@
  * packages first published only days ago.
  *
  * Only package names are sent, to registry.npmjs.org, exactly as `npm install` would.
- * Packages that come from a private registry (set in .npmrc) and the project's own
+ * Packages that come from a private registry (set in .npmrc), from a folder, git host or URL
+ * (including `../lib` paths and `owner/repo` GitHub shorthand), and the project's own
  * workspace packages are never looked up.
  */
 import { posix } from "node:path";
@@ -34,6 +35,10 @@ export type RegistryResult =
 
 const NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const LOCAL_SPEC = /^(file|link|workspace|portal|git|git\+[a-z]+|github|gitlab|bitbucket|https?):/;
+/** A folder on disk: `./lib`, `../lib`, `/abs/lib`, `~/lib`, or `.` and `..` alone. */
+const PATH_SPEC = /^(\.{1,2}|\.{0,2}\/.*|~\/.*)$/;
+/** GitHub shorthand, `owner/repo` with an optional `#ref`. Registry specs never contain a slash outside `npm:` aliases. */
+const GITHUB_SHORTHAND = /^[\w.-]+\/[\w.-]+(#.*)?$/;
 
 /**
  * Every dependency and devDependency name in the project's package.json files that would be
@@ -68,7 +73,7 @@ export function declaredDependencies(project: ProjectFiles): DeclaredDependency[
       // Find the section, so each name's offset points at the right occurrence.
       const sectionAt = text.search(new RegExp(`"${section}"\\s*:`));
       for (const [raw, spec] of Object.entries(deps)) {
-        if (typeof spec !== "string" || LOCAL_SPEC.test(spec)) continue;
+        if (typeof spec !== "string" || LOCAL_SPEC.test(spec) || PATH_SPEC.test(spec) || GITHUB_SHORTHAND.test(spec)) continue;
         // npm:real-name@version aliases fetch real-name.
         const alias = /^npm:((?:@[^/]+\/)?[^@]+)/.exec(spec);
         const name = (alias ? alias[1]! : raw).toLowerCase();

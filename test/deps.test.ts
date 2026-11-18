@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { ProjectFiles } from "../src/core/project.js";
@@ -204,6 +204,107 @@ describe("SW-X02 dependency that isn't on npm, or is brand new", () => {
     p.done();
     expect(urls.every((u) => u.startsWith("https://registry.npmjs.org/"))).toBe(true);
     expect(r.findings.filter((x) => x.ruleId === "SW-X02").map((x) => x.title)).toEqual(["made-up-test-helper isn't on npm"]);
+  });
+
+  /** The names declaredDependencies() would send to the registry, for one dependency spec each. */
+  const lookedUp = (deps: Record<string, string>) => {
+    const p = project({ "package.json": JSON.stringify({ name: "app", dependencies: deps }) });
+    const names = declaredDependencies(p.files).map((d) => d.name);
+    p.done();
+    return names;
+  };
+
+  it.each([
+    ["../lib"],
+    ["../../packages/lib"],
+    ["./lib"],
+    ["./"],
+    ["."],
+    [".."],
+    ["/abs/lib"],
+    ["/"],
+    ["~/code/lib"],
+    ["someuser/somerepo"],
+    ["some-user/some.repo"],
+    ["some_user/repo-name#main"],
+    ["someuser/somerepo#v1.2.3"],
+    ["someuser/somerepo#semver:^2.0.0"],
+  ])("skips the path or GitHub-shorthand spec %j", (spec) => {
+    expect(lookedUp({ "local-thing": spec })).toEqual([]);
+  });
+
+  it.each([
+    ["1.0.0", "real-name"],
+    ["^1.2.3", "real-name"],
+    ["~1.2.3", "real-name"],
+    [">=1.0.0 <2.0.0", "real-name"],
+    ["1.x || 2.x", "real-name"],
+    ["*", "real-name"],
+    ["", "real-name"],
+    ["latest", "real-name"],
+    ["next", "real-name"],
+    ["npm:aliased-name@1", "aliased-name"],
+    ["npm:@scope/aliased-name@1", "@scope/aliased-name"],
+    ["npm:@scope/aliased-name@^2.1.0", "@scope/aliased-name"],
+  ])("still looks up the registry spec %j", (spec, name) => {
+    expect(lookedUp({ "real-name": spec })).toEqual([name]);
+  });
+
+  it("the issue's reproduction: path, shorthand and ~/ deps are not fetched or flagged; registry specs are", async () => {
+    const p = project({
+      "package.json": JSON.stringify({
+        name: "c1",
+        dependencies: {
+          "my-local-lib": "../lib",
+          "my-fork": "someuser/somerepo",
+          "tilde-lib": "~/code/lib",
+          "made-up-thing": "^1.0.0",
+          "@scope/made-up": "npm:@scope/made-up@1",
+        },
+      }),
+    });
+    const { f, urls } = fakeRegistry({ missing: ["my-local-lib", "my-fork", "tilde-lib", "made-up-thing", "@scope/made-up"] });
+    const npm = await lookupPackages(declaredDependencies(p.files).map((d) => d.name), f);
+    const r = scan(p.root, DEFAULT_CONFIG, RULES, { npm });
+    p.done();
+    expect(urls).toEqual(["https://registry.npmjs.org/made-up-thing", "https://registry.npmjs.org/@scope%2fmade-up"]);
+    expect(r.findings.filter((x) => x.ruleId === "SW-X02").map((x) => x.title)).toEqual([
+      "made-up-thing isn't on npm",
+      "@scope/made-up isn't on npm",
+    ]);
+  });
+
+  describe("fixtures", () => {
+    const X02 = resolve(__dirname, "../fixtures/rules/sw-x02");
+    const decoyNames = Object.keys(
+      (JSON.parse(readFileSync(join(X02, "decoy/package.json"), "utf8")) as { dependencies: Record<string, string> }).dependencies,
+    );
+    /** Scan one fixture folder against a fake registry where the made-up name and every decoy name are missing. */
+    const run = async (folder: string) => {
+      const dir = join(X02, folder);
+      const files = new ProjectFiles(dir, walk(dir).files);
+      const { f, urls } = fakeRegistry({ missing: ["react-markdown-safe-html", ...decoyNames.filter((n) => n !== "react")] });
+      const npm = await lookupPackages(declaredDependencies(files).map((d) => d.name), f);
+      const r = scan(dir, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES, { npm });
+      return { urls, findings: r.findings.filter((x) => x.ruleId === "SW-X02") };
+    };
+
+    it("vulnerable: the made-up package is flagged at its line, with a fix and prompt", async () => {
+      const { findings } = await run("vulnerable");
+      expect(findings.map((x) => `${x.file}:${x.line} ${x.severity} ${x.title}`)).toEqual([
+        "package.json:6 high react-markdown-safe-html isn't on npm",
+      ]);
+      expect(findings[0]!.fix).toContain("Remove react-markdown-safe-html");
+      expect(findings[0]!.fixPrompt).toContain("react-markdown-safe-html, which doesn't exist on npm");
+    });
+    it("fixed: the real package is clean", async () => {
+      expect((await run("fixed")).findings).toEqual([]);
+    });
+    it("decoy: local, git, URL, path and GitHub-shorthand deps are neither looked up nor flagged", async () => {
+      const { urls, findings } = await run("decoy");
+      expect(urls).toEqual(["https://registry.npmjs.org/react"]);
+      expect(findings).toEqual([]);
+    });
   });
 
   it("a project that uses a private registry for everything is never looked up", () => {
