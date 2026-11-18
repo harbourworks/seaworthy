@@ -4,7 +4,7 @@
 
 Every rule Seaworthy runs, with what it reads and where it stops. A rule only runs when its stack is detected. Run `npx seaworthy-cli explain <ID>` for an example of the problem and the fix.
 
-**What Seaworthy reads:** JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, Claude Code project settings, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03).
+**What Seaworthy reads:** JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, Claude Code project settings, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03), and the registry settings in a project .npmrc, which npm still uses (SW-X02).
 
 | ID | Rule | Severity | Runs on |
 | --- | --- | --- | --- |

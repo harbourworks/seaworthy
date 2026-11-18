@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { ProjectFiles } from "../src/core/project.js";
-import { walk } from "../src/core/walk.js";
+import { excluder, walk } from "../src/core/walk.js";
 import { scan } from "../src/core/scan.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { RULES } from "../src/rules/index.js";
@@ -311,6 +311,89 @@ describe("SW-X02 dependency that isn't on npm, or is brand new", () => {
     const p = project({ "package.json": pkg({ anything: "1.0.0" }), ".npmrc": "registry=https://npm.corp.example/\n" });
     expect(declaredDependencies(p.files)).toEqual([]);
     p.done();
+  });
+
+  describe("a project .npmrc that .gitignore lists (#32)", () => {
+    const deps = { name: "c3", dependencies: { "internal-billing-sdk": "^2.0.0", "@corp/ledger": "1.0.0", lodash: "4.17.21" } };
+    const names = (files: Record<string, string>) => {
+      const p = project({ "package.json": JSON.stringify(deps), ...files });
+      try {
+        return declaredDependencies(p.files).map((d) => d.name).sort();
+      } finally {
+        p.done();
+      }
+    };
+
+    it("control: with no .npmrc, every package is looked up", () => {
+      expect(names({ ".gitignore": ".npmrc\n" })).toEqual(["@corp/ledger", "internal-billing-sdk", "lodash"]);
+    });
+
+    it("a gitignored registry= sends nothing to registry.npmjs.org", async () => {
+      const found = names({ ".gitignore": ".npmrc\n", ".npmrc": "registry=https://npm.corp.example/\n" });
+      expect(found).toEqual([]);
+      const { f, urls } = fakeRegistry();
+      await lookupPackages(found, f);
+      expect(urls).toEqual([]);
+    });
+
+    it("a gitignored @scope:registry= keeps that scope private and still checks the rest", () => {
+      expect(names({ ".gitignore": ".npmrc\n", ".npmrc": "@corp:registry=https://npm.corp.example/\n" })).toEqual([
+        "internal-billing-sdk",
+        "lodash",
+      ]);
+    });
+
+    it("works for an .npmrc next to a workspace package.json, and for a glob ignore", () => {
+      const p = project({
+        "package.json": JSON.stringify({ name: "root", private: true }),
+        "apps/web/package.json": JSON.stringify(deps),
+        "apps/web/.npmrc": "@corp:registry=https://npm.corp.example/\n",
+        ".gitignore": "**/.npmrc\n",
+      });
+      const found = declaredDependencies(p.files).map((d) => d.name).sort();
+      p.done();
+      expect(found).toEqual(["internal-billing-sdk", "lodash"]);
+    });
+
+    it("decoy: a gitignored token-only .npmrc does not stop public lookups", () => {
+      const token = "//registry.npmjs.org/:_authToken=npm_FAKE0000000000000000000000000000fake\n";
+      expect(names({ ".gitignore": ".npmrc\n", ".npmrc": token })).toEqual(["@corp/ledger", "internal-billing-sdk", "lodash"]);
+    });
+
+    it("is not added to the scanned files, so content rules never see it", () => {
+      const p = project({
+        "package.json": JSON.stringify(deps),
+        ".gitignore": ".npmrc\n",
+        ".npmrc": `registry=https://npm.corp.example/\n//npm.corp.example/:_authToken=npm_${"aB3dE5gH7jK9mN1pQ3s" + "T5vW7yZ9bC1dE3fG5"}\n`, // fake, split so the source isn't flagged; SW-S01 flags it if the file is scanned
+      });
+      const r = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES, { npm: { status: "offline" } });
+      const listed = p.files.files.includes(".npmrc");
+      const found = declaredDependencies(p.files);
+      p.done();
+      expect(listed).toBe(false);
+      expect(found).toEqual([]);
+      expect(r.findings.filter((x) => x.file === ".npmrc")).toEqual([]);
+    });
+
+    it("never reads an .npmrc outside the scanned folder, or one the config ignores", () => {
+      const outer = mkdtempSync(join(tmpdir(), "seaworthy-outer-"));
+      writeFileSync(join(outer, ".npmrc"), "registry=https://npm.corp.example/\n");
+      const root = join(outer, "app");
+      mkdirSync(root);
+      writeFileSync(join(root, "package.json"), JSON.stringify(deps));
+      const all = ["@corp/ledger", "internal-billing-sdk", "lodash"];
+      const lookups = (ignore: string[]) =>
+        declaredDependencies(new ProjectFiles(root, walk(root, ignore).files, excluder(ignore))).map((d) => d.name).sort();
+      try {
+        expect(lookups([])).toEqual(all); // the parent folder's .npmrc is not read
+        writeFileSync(join(root, ".gitignore"), ".npmrc\n");
+        writeFileSync(join(root, ".npmrc"), "registry=https://npm.corp.example/\n");
+        expect(lookups([])).toEqual([]);
+        expect(lookups([".npmrc"])).toEqual(all); // the config's ignore still wins
+      } finally {
+        rmSync(outer, { recursive: true, force: true });
+      }
+    });
   });
 
   it("reports nothing offline, when the registry is down, or in library use", async () => {
