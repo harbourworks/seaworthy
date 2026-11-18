@@ -7,7 +7,8 @@
  * Packages that come from a private registry (set in .npmrc) and the project's own
  * workspace packages are never looked up.
  */
-import { posix } from "node:path";
+import { lstatSync } from "node:fs";
+import { join, posix } from "node:path";
 import type { ProjectFiles } from "../core/project.js";
 
 const REGISTRY = "https://registry.npmjs.org";
@@ -48,7 +49,7 @@ export function declaredDependencies(project: ProjectFiles): DeclaredDependency[
   }
   const privateScopes = new Set<string>();
   let privateRegistry = false;
-  for (const f of project.files.filter((f) => posix.basename(f) === ".npmrc")) {
+  for (const f of npmrcFiles(project, pkgFiles)) {
     for (const line of (project.read(f) ?? "").split(/\r?\n/)) {
       const scoped = /^\s*(@[^:\s]+):registry\s*=/.exec(line);
       if (scoped) privateScopes.add(scoped[1]!.toLowerCase());
@@ -81,6 +82,26 @@ export function declaredDependencies(project: ProjectFiles): DeclaredDependency[
     }
   }
   return out;
+}
+
+/**
+ * The project's .npmrc files: those in the scan, plus any next to the root or a package.json
+ * that .gitignore hides (often the case, as they can hold an `_authToken`). npm still reads
+ * those, so their registry settings count. The extra ones are only read here, never added to
+ * the scanned files, and only from folders inside the project that the config doesn't ignore.
+ */
+function npmrcFiles(project: ProjectFiles, pkgFiles: string[]): string[] {
+  const found = new Set(project.files.filter((f) => posix.basename(f) === ".npmrc"));
+  for (const dir of new Set([".", ...pkgFiles.map((f) => posix.dirname(f))])) {
+    const rel = dir === "." ? ".npmrc" : `${dir}/.npmrc`;
+    if (found.has(rel) || project.isExcluded(rel)) continue;
+    try {
+      if (lstatSync(join(project.root, rel), { throwIfNoEntry: false })?.isFile()) found.add(rel);
+    } catch {
+      // unreadable: npm couldn't use it either
+    }
+  }
+  return [...found].sort();
 }
 
 export async function lookupPackages(names: string[], fetchImpl: typeof fetch = fetch, now = new Date()): Promise<RegistryResult> {

@@ -64,7 +64,7 @@ export function catalogue(): CatalogueEntry[] {
 }
 
 export const READS =
-  "JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, Claude Code project settings, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03).";
+  "JavaScript and TypeScript (including JSX, Vue, Svelte and Astro script blocks; test files are skipped), Supabase SQL migrations, Firebase rules, .env files, MCP configs, Claude Code project settings, lockfiles, and web server config. Files over 1 MB, build folders and anything in .gitignore are skipped, except .env files, which still get bundled into your app (SW-S03), and the registry settings in a project .npmrc, which npm still uses (SW-X02).";
 
 export const STILL_TO_COME: string[] = [];
 
