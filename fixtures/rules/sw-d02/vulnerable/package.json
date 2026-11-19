@@ -1,0 +1,7 @@
+{
+  "name": "sw-d02-vulnerable",
+  "private": true,
+  "dependencies": {
+    "@supabase/supabase-js": "2.45.0"
+  }
+}

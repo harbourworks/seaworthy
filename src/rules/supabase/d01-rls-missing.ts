@@ -27,6 +27,29 @@ export const d01RlsMissing: Rule = {
     for (const t of tables.values()) {
       if (t.rlsEnabled || t.temporary || t.apiRevoked || !EXPOSED_SCHEMAS.has(t.schema)) continue;
       const qualified = `${t.schema}.${t.name}`;
+      if (t.rlsDynamic) {
+        const where = `${t.rlsDynamic.file}:${project.position(t.rlsDynamic.file, t.rlsDynamic.offset).line}`;
+        out.push({
+          title: `Table ${qualified} may not have row-level security`,
+          confidence: "low",
+          file: t.file,
+          ...project.position(t.file, t.offset),
+          why:
+            `${qualified} is created without row-level security, and Supabase exposes it through the Data API. ` +
+            `The \`execute\` in a DO block at ${where} runs SQL that Seaworthy can't work out in advance (for example ` +
+            `table names held in a variable or looked up when it runs), so it may enable row-level security on ${qualified}. ` +
+            `If it doesn't, anyone with your public anon key can read, edit and delete every row.`,
+          fix:
+            `Check that the \`execute\` at ${where} enables row-level security on ${qualified}. If it doesn't, add a ` +
+            `migration with \`alter table ${qualified} enable row level security;\` and policies for the access you want.`,
+          fixPrompt:
+            `In my Supabase migrations, the table ${qualified} is created without row-level security, and the \`execute\` in a DO block ` +
+            `at ${where} may or may not enable it. Check whether it enables row-level security on ${qualified}. ` +
+            `If it doesn't, write a new migration that runs \`alter table ${qualified} enable row level security;\` and adds ` +
+            `policies so each user can only select, insert, update and delete their own rows. Don't edit existing migrations.`,
+        });
+        continue;
+      }
       out.push({
         title: `Table ${qualified} has no row-level security`,
         file: t.file,
