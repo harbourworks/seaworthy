@@ -1035,6 +1035,122 @@ describe("SW-P01 Stripe webhook without signature check", () => {
     p.done();
     expect(r.rulesRun).not.toContain("SW-P01");
   });
+
+  describe("split layout: a route passes the event to a handler module", () => {
+    const P01 = resolve(__dirname, "../fixtures/rules/sw-p01");
+    const at = (root: string) =>
+      scan(root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES).findings.filter((f) => f.ruleId === "SW-P01");
+    const handler =
+      'import type Stripe from "stripe";\n\nexport async function handleStripeEvent(event: Stripe.Event) {\n' +
+      '  switch (event.type) {\n    case "checkout.session.completed":\n      break;\n  }\n}\n';
+    const verifyingRoute = (spec: string, verify = "constructEvent") =>
+      `import Stripe from "stripe";\nimport { handleStripeEvent } from "${spec}";\nconst stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);\n` +
+      `export async function POST(req: Request) {\n  const event = await stripe.webhooks.${verify}(await req.text(), req.headers.get("stripe-signature")!, process.env.STRIPE_WEBHOOK_SECRET!);\n` +
+      `  await handleStripeEvent(event);\n  return new Response("ok");\n}\n`;
+    const parsingRoute = (spec: string) =>
+      `import { handleStripeEvent } from "${spec}";\nexport async function POST(req: Request) {\n` +
+      `  await handleStripeEvent(await req.json());\n  return new Response("ok");\n}\n`;
+
+    it("fixed fixture: the route that imports the handler verifies, so nothing is flagged", () => {
+      expect(at(join(P01, "fixed"))).toEqual([]);
+    });
+    it("decoy fixture: relative .js import, constructEventAsync and a webhook-named handler file", () => {
+      expect(at(join(P01, "decoy"))).toEqual([]);
+    });
+    it("vulnerable fixture: the handler is reported at medium, with wording about callers, not a request body", () => {
+      const f = at(join(P01, "vulnerable"));
+      expect(f.map((x) => `${x.file}:${x.line} ${x.severity}/${x.confidence}`)).toEqual([
+        "src/services/billing/webhookHandler.ts:5 critical/medium",
+      ]);
+      const [x] = f;
+      expect(x!.title).toBe("Stripe webhook does not verify the signature");
+      expect(x!.why).toBe(
+        'This file handles Stripe events (such as "checkout.session.completed"), but no Stripe signature check was ' +
+          "found in it, in the local files it imports, or in the files that call it. If these events come straight " +
+          "from your webhook, anyone who finds the URL can send a fake event, for example a completed checkout, and " +
+          "your app will treat it as a real payment.",
+      );
+      expect(x!.fixPrompt).toMatch(
+        /^src\/services\/billing\/webhookHandler\.ts handles Stripe events, but no Stripe signature check was found in it or in the files that call it\. /,
+      );
+      for (const text of [x!.why, x!.fix, x!.fixPrompt]) {
+        expect(text).not.toMatch(/request body|parses the|from the body/i);
+      }
+      expect(x!.fixPrompt).toContain("stripe.webhooks.constructEvent");
+    });
+    it("vulnerable fixture: medium confidence means it is hidden by default", () => {
+      const r = scan(join(P01, "vulnerable"), DEFAULT_CONFIG, RULES);
+      expect(r.findings.filter((f) => f.ruleId === "SW-P01")).toEqual([]);
+    });
+    it("skips a handler whose importer verifies, through @/, ~/, relative and .js imports", () => {
+      const h = "src/lib/stripe/webhook-handler.ts";
+      expect(run({ [h]: handler, "src/app/api/hooks/route.ts": verifyingRoute("@/lib/stripe/webhook-handler") })).toEqual([]);
+      expect(run({ [h]: handler, "src/app/api/hooks/route.ts": verifyingRoute("~/lib/stripe/webhook-handler") })).toEqual([]);
+      expect(run({ [h]: handler, "src/app/api/hooks/route.ts": verifyingRoute("../../../lib/stripe/webhook-handler.js") })).toEqual([]);
+      expect(
+        run({ [h]: handler, "src/app/api/hooks/route.ts": verifyingRoute("@/lib/stripe/webhook-handler", "constructEventAsync") }),
+      ).toEqual([]);
+      expect(run({ "lib/stripe/index.ts": handler, "app/api/hooks/route.ts": verifyingRoute("@/lib/stripe") })).toEqual([]);
+      expect(
+        run({
+          "server/handlers/stripe.js": handler.replace(/^import type.*\n/, "").replace(": Stripe.Event", ""),
+          "server/webhook.js":
+            'const { handleStripeEvent } = require("./handlers/stripe");\n' +
+            'app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {\n' +
+            '  await handleStripeEvent(stripe.webhooks.constructEvent(req.body, req.headers["stripe-signature"], secret));\n  res.sendStatus(200);\n});\n',
+        }),
+      ).toEqual([]);
+    });
+    it("a test file that verifies and imports the handler doesn't count", () => {
+      expect(
+        run({
+          "lib/events.ts": handler,
+          "lib/events.test.ts":
+            'import { handleStripeEvent } from "./events";\nit("x", () => handleStripeEvent(stripe.webhooks.constructEvent(b, s, k)));\n',
+        }),
+      ).toEqual(["lib/events.ts:5 medium"]);
+    });
+    it("one verifying importer is enough, even if another importer doesn't verify", () => {
+      expect(
+        run({
+          "lib/events.ts": handler,
+          "app/api/stripe/route.ts": verifyingRoute("@/lib/events"),
+          "app/admin/replay/route.ts": parsingRoute("@/lib/events"),
+        }),
+      ).toEqual([]);
+    });
+    it("still reports the handler when no importer verifies: medium, even in a webhook-named file", () => {
+      expect(run({ "lib/stripe-webhook.ts": handler, "app/api/stripe/route.ts": parsingRoute("@/lib/stripe-webhook") })).toEqual([
+        "lib/stripe-webhook.ts:5 medium",
+      ]);
+      expect(run({ "lib/webhooks/stripe.ts": handler })).toEqual(["lib/webhooks/stripe.ts:5 medium"]);
+    });
+    it("an importer that only mentions constructEvent in an unrelated file elsewhere doesn't count", () => {
+      expect(
+        run({
+          "lib/events.ts": handler,
+          "lib/verify.ts": "export const verify = (b: string, s: string) => stripe.webhooks.constructEvent(b, s, secret);\n",
+          "app/api/stripe/route.ts": parsingRoute("@/lib/events"),
+        }),
+      ).toEqual(["lib/events.ts:5 medium"]);
+    });
+    it("a route that reads the body and doesn't verify is still high, with the request-body wording", () => {
+      const p = project({ ...stripeDeps, "app/api/stripe-webhook/route.ts": unverified });
+      const f = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES).findings.filter((x) => x.ruleId === "SW-P01");
+      p.done();
+      expect(f.map((x) => `${x.file}:${x.line} ${x.confidence}`)).toEqual(["app/api/stripe-webhook/route.ts:2 high"]);
+      expect(f[0]!.why).toMatch(/^This handler acts on Stripe events \(such as "invoice\.paid"\) from the request body /);
+      expect(f[0]!.fixPrompt).toMatch(/^In app\/api\/stripe-webhook\/route\.ts, my Stripe webhook handler parses the request body /);
+    });
+    it("a body-reading route is not skipped because a file that imports it verifies", () => {
+      expect(
+        run({
+          "lib/stripe-route.ts": unverified,
+          "app/api/other/route.ts": verifyingRoute("@/lib/stripe-route"),
+        }),
+      ).toEqual(["lib/stripe-route.ts:2 high"]);
+    });
+  });
 });
 
 describe("SW-B01 missing security headers", () => {

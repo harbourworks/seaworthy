@@ -16,7 +16,6 @@ const STRIPE_EVENT_RE = new RegExp(`^${EVENT_SOURCE}$`);
 const STRIPE_EVENT_TEXT_RE = new RegExp(`["'\`]${EVENT_SOURCE}["'\`]`);
 /** Ways a handler proves the event came from Stripe. */
 const VERIFIES_RE = /\bconstructEvent(Async)?\s*\(|\bwebhooks\.signature\b|\bevents\.retrieve\s*\(/;
-const WEBHOOK_PATH_RE = /(^|\/)[^/]*webhook[^/]*(\/|\.)/i;
 
 export const p01WebhookUnverified: Rule = {
   id: "SW-P01",
@@ -39,36 +38,68 @@ export const p01WebhookUnverified: Rule = {
 
   check({ project }) {
     const out: RawFinding[] = [];
-    for (const file of codeFiles(project)) {
+    const files = codeFiles(project);
+    for (const file of files) {
       const text = project.read(file);
       if (!text) continue;
       const handler = analyse(file, text);
       if (!handler.handlesStripeEvents) continue;
       if (VERIFIES_RE.test(text) || helperVerifies(project, file, text)) continue;
-      const inWebhookPath = WEBHOOK_PATH_RE.test(file);
+      const readsBody = handler.bodyOffset !== null;
+      // A module that takes an already-parsed event is often called by a route that verifies it.
+      if (!readsBody && importerVerifies(project, files, file)) continue;
       out.push({
         file,
         ...project.position(file, handler.bodyOffset ?? handler.eventOffset),
-        // Event names alone could be a test helper or a shared type; a webhook path settles it.
-        confidence: inWebhookPath || handler.bodyOffset !== null ? "high" : "medium",
-        why:
-          `This handler acts on Stripe events (such as "${handler.example}") from the request body without ` +
-          `checking Stripe's signature. Anyone who finds the URL can send a fake event, for example a completed ` +
-          `checkout, and your app will treat it as a real payment.`,
-        fix:
-          `Read the raw body with \`await req.text()\`, then verify it: ` +
-          `\`stripe.webhooks.constructEvent(body, req.headers.get("stripe-signature")!, process.env.STRIPE_WEBHOOK_SECRET!)\`. ` +
-          `Return 400 if it throws, and use the event it returns instead of the parsed body.`,
-        fixPrompt:
-          `In ${file}, my Stripe webhook handler parses the request body and trusts it without verifying Stripe's ` +
-          `signature. Change it to read the raw body with req.text(), verify it with stripe.webhooks.constructEvent ` +
-          `using the stripe-signature header and STRIPE_WEBHOOK_SECRET, return a 400 response if verification fails, ` +
-          `and use only the verified event.`,
+        // Only a file that reads the request itself is certainly the webhook; a webhook-like name isn't proof.
+        confidence: readsBody ? "high" : "medium",
+        ...(readsBody ? bodyWording(file, handler.example) : eventWording(file, handler.example)),
       });
     }
     return out;
   },
 };
+
+type Wording = Pick<RawFinding, "why" | "fix" | "fixPrompt">;
+
+/** The file reads the request body and acts on it unverified. */
+function bodyWording(file: string, example: string): Wording {
+  return {
+    why:
+      `This handler acts on Stripe events (such as "${example}") from the request body without ` +
+      `checking Stripe's signature. Anyone who finds the URL can send a fake event, for example a completed ` +
+      `checkout, and your app will treat it as a real payment.`,
+    fix:
+      `Read the raw body with \`await req.text()\`, then verify it: ` +
+      `\`stripe.webhooks.constructEvent(body, req.headers.get("stripe-signature")!, process.env.STRIPE_WEBHOOK_SECRET!)\`. ` +
+      `Return 400 if it throws, and use the event it returns instead of the parsed body.`,
+    fixPrompt:
+      `In ${file}, my Stripe webhook handler parses the request body and trusts it without verifying Stripe's ` +
+      `signature. Change it to read the raw body with req.text(), verify it with stripe.webhooks.constructEvent ` +
+      `using the stripe-signature header and STRIPE_WEBHOOK_SECRET, return a 400 response if verification fails, ` +
+      `and use only the verified event.`,
+  };
+}
+
+/** The file handles events it is given; whoever calls it should have verified them. */
+function eventWording(file: string, example: string): Wording {
+  return {
+    why:
+      `This file handles Stripe events (such as "${example}"), but no Stripe signature check was found in it, ` +
+      `in the local files it imports, or in the files that call it. If these events come straight from your ` +
+      `webhook, anyone who finds the URL can send a fake event, for example a completed checkout, and your app ` +
+      `will treat it as a real payment.`,
+    fix:
+      `In the webhook route that passes events to this file, verify each one before calling it: ` +
+      `\`stripe.webhooks.constructEvent(await req.text(), req.headers.get("stripe-signature")!, process.env.STRIPE_WEBHOOK_SECRET!)\`. ` +
+      `Return 400 if it throws, and pass on only the event it returns.`,
+    fixPrompt:
+      `${file} handles Stripe events, but no Stripe signature check was found in it or in the files that call ` +
+      `it. Find the webhook route that passes events to it. In that route, read the raw body with req.text(), ` +
+      `verify it with stripe.webhooks.constructEvent using the stripe-signature header and STRIPE_WEBHOOK_SECRET, ` +
+      `return a 400 response if verification fails, and pass only the verified event to the code in ${file}.`,
+  };
+}
 
 interface Analysis {
   handlesStripeEvents: boolean;
@@ -119,6 +150,17 @@ function helperVerifies(project: ProjectFiles, file: string, text: string): bool
   for (const spec of importsOf(file, text)) {
     const target = resolveImport(project, file, spec);
     if (target && VERIFIES_RE.test(project.read(target) ?? "")) return true;
+  }
+  return false;
+}
+
+/** The other direction: a local file that imports this one verifies (one level of callers). */
+function importerVerifies(project: ProjectFiles, files: string[], file: string): boolean {
+  for (const caller of files) {
+    if (caller === file) continue;
+    const text = project.read(caller);
+    if (!text || !VERIFIES_RE.test(text)) continue;
+    if (importsOf(caller, text).some((spec) => resolveImport(project, caller, spec) === file)) return true;
   }
   return false;
 }

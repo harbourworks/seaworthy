@@ -111,7 +111,7 @@ A Postgres view runs with its owner's rights unless it is created with `security
 
 Your webhook URL is public, so anyone can send it a request that looks like a Stripe event. If the handler trusts the body without checking Stripe's signature, a single fake `checkout.session.completed` gives someone a paid plan for free. Stripe signs every event; `stripe.webhooks.constructEvent` checks that signature against your endpoint's secret.
 
-**Checks:** Stripe webhook handlers that act on real Stripe event names without `constructEvent` or `events.retrieve`, in the file or a local helper it imports.
+**Checks:** Stripe webhook handlers that act on real Stripe event names without `constructEvent` or `events.retrieve`, in the file or a local helper it imports. A file that handles events but doesn't read a request body itself is skipped when a local file that imports it verifies, and otherwise reported at medium confidence.
 
 ## SW-P02
 
