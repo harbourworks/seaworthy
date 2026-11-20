@@ -2,6 +2,15 @@
 
 All notable changes to seaworthy-cli. Versions follow [semantic versioning](https://semver.org); while it's 0.x, a minor version can change behaviour.
 
+## 0.7.2 (20 November 2026)
+
+Fewer false alarms from SW-S04 and SW-X02, and fewer package names sent to npm.
+
+- **SW-S04 and `dangerouslyAllowBrowser: false`:** in Vue and Svelte files, and in other files that are text-matched, `dangerouslyAllowBrowser: false` is no longer reported when there's a space or a line break before `false`. `true` and other values are still reported.
+- **Files with decorators:** JavaScript and TypeScript files that use decorators (`@Component`, `@Input()`, `constructor(@Inject(X) x)`, `@observable accessor busy`, `export @dec class`) are now read as code instead of being text-matched. SW-S04 no longer flags `dangerouslyAllowBrowser` in type declarations in these files, and the API route, Stripe checkout price, SQL, prompt and agent-tool checks now cover them, so a problem in such a file that was missed before can now be reported.
+- **SW-X02 and local or GitHub dependencies:** dependencies installed from a folder (`../lib`, `./lib`, `/opt/lib`, `~/lib`, `.`, `..`) or written as GitHub shorthand (`owner/repo`, `owner/repo#ref`) are no longer looked up on the npm registry or reported as "isn't on npm".
+- **SW-X02 and a gitignored `.npmrc`:** the registry settings (`registry=` and `@scope:registry=`) in a `.npmrc` that `.gitignore` hides are now used when it sits in the scanned folder or next to a `package.json`, so packages from your private registry are no longer looked up on npm. The file is only read for those settings: other checks don't scan it, and the `ignore` list in `seaworthy.config.json` still excludes it.
+
 ## 0.7.1 (14 November 2026)
 
 - **Class `accessor` fields:** JavaScript and TypeScript files with fields like `accessor count = 0` are now read as code instead of being skipped or text-matched. SW-S04 no longer flags `dangerouslyAllowBrowser` in type declarations or set to `false` in these files, and the API route, Stripe checkout price, SQL, prompt and agent-tool checks now cover them, so a problem in such a file that was missed before can now be reported. Fields with a decorator (`@observable accessor busy = false`) are still text-matched.
