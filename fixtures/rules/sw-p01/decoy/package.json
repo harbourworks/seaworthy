@@ -1,0 +1,8 @@
+{
+  "name": "sw-p01-fixture",
+  "private": true,
+  "dependencies": {
+    "next": "15.0.0",
+    "stripe": "17.0.0"
+  }
+}
