@@ -16,8 +16,13 @@ export const COVERAGE: Record<string, string> = {
   "SW-S03":
     "Variables with a public prefix (NEXT_PUBLIC_, VITE_, REACT_APP_, EXPO_PUBLIC_, NUXT_PUBLIC_, GATSBY_, PUBLIC_) whose name or value is a secret, in .env files (including git-ignored ones, which still get bundled) and in code that reads them.",
   "SW-S04": "Public variables holding LLM provider keys, code that reads them, and `dangerouslyAllowBrowser`.",
-  "SW-D01": "Supabase SQL migrations (`supabase/migrations/*.sql`), in order, including later `enable` and `disable`, renames and drops.",
-  "SW-D02": "Policies in Supabase SQL migrations or `supabase db dump` output whose `using` or `with check` is always true or only checks that someone is logged in.",
+  "SW-D01":
+    "Supabase SQL migrations (`supabase/migrations/*.sql`), in order, including later `enable` and `disable`, renames and drops. " +
+    "In a `do` block, a `foreach <var> in array array['a', 'b'] loop` that runs `execute format('<SQL>', <var>)` is read as the SQL it runs for each name (`%I`, `%s`, `%1$I` and `%1$s`). " +
+    "If a `do` block that mentions row level security runs any other `execute` (table names looked up when it runs, an array or format string held in a variable), tables created before it without RLS are reported at low confidence.",
+  "SW-D02":
+    "Policies in Supabase SQL migrations or `supabase db dump` output whose `using` or `with check` is always true or only checks that someone is logged in. " +
+    "Policies created by a `do` block loop that SW-D01 can read are checked too, with one finding per table at the `execute` line.",
   "SW-D03": "Firestore security rules and Realtime Database JSON rules, found directly or through firebase.json.",
   "SW-D04": "Firebase Cloud Storage rules, and Supabase buckets made public in SQL (migrations and seed.sql), supabase/config.toml or createBucket/updateBucket calls. A public bucket whose name suggests private files (invoices, documents, ID scans) is high; one with a neutral name is medium, at medium confidence; buckets for images and avatars aren't flagged.",
   "SW-D05":

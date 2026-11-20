@@ -22,6 +22,12 @@ export interface TableState {
   /** Offset of the `create table` statement. */
   offset: number;
   rlsEnabled: boolean;
+  /**
+   * Set when a DO block ran SQL the replay can't expand (computed table names, a format
+   * string that isn't a literal) after the table was created, so RLS may have been enabled
+   * there. Points at that block's `execute`. A later plain `alter table` clears it.
+   */
+  rlsDynamic?: { file: string; offset: number };
   /** API roles had their privileges revoked, so the Data API cannot reach it. */
   apiRevoked: boolean;
   temporary: boolean;
@@ -131,7 +137,7 @@ function fromFirstToken(stmt: SqlStatement, masked: string): number {
  * a policy name, string or comment that happens to contain "using (" can't be mistaken for
  * a clause, and offsets point at the real source.
  */
-function policyParts(stmt: SqlStatement, file: string) {
+function policyParts(stmt: SqlStatement, file: string, pin?: number) {
   const masked = maskSql(stmt.raw, true);
   const commentless = maskSql(stmt.raw, false);
   const start = fromFirstToken(stmt, masked);
@@ -149,7 +155,7 @@ function policyParts(stmt: SqlStatement, file: string) {
     headerEnd = Math.min(headerEnd, m.index);
     const inner = commentless.slice(open + 1, close);
     const lead = inner.length - inner.trimStart().length;
-    const clause = { expr: inner.replace(/\s+/g, " ").trim(), offset: stmt.rawOffset + open + 1 + lead, file };
+    const clause = { expr: inner.replace(/\s+/g, " ").trim(), offset: pin ?? stmt.rawOffset + open + 1 + lead, file };
     if (/^using/i.test(m[1]!)) clauses.using = clause;
     else clauses.check = clause;
     re.lastIndex = close + 1;
@@ -334,6 +340,126 @@ function rekey<T extends { schema: string; name: string }>(map: Map<string, T>, 
   map.set(`${schema}.${name}`, item);
 }
 
+const SIMPLE_IDENT = /^[a-z_][a-z0-9_$]*$/;
+
+/**
+ * Postgres `format(fmt, v, v, …)` with the same value for all `nArgs` arguments. Handles
+ * `%s`, `%I`, their positional forms (`%1$I`) and `%%`. Returns null for anything else
+ * (`%L`, widths, a missing argument), so the caller treats the SQL as unknown.
+ */
+export function formatSql(fmt: string, nArgs: number, value: string): string | null {
+  // quote_ident leaves plain lower-case names bare; keywords it would quote read the same here.
+  const ident = SIMPLE_IDENT.test(value) ? value : `"${value.replace(/"/g, '""')}"`;
+  let out = "";
+  let next = 0;
+  for (let i = 0; i < fmt.length; i++) {
+    if (fmt[i] !== "%") {
+      out += fmt[i];
+      continue;
+    }
+    const m = /^%(?:%|(?:([1-9]\d*)\$)?([sI]))/.exec(fmt.slice(i));
+    if (!m) return null;
+    i += m[0].length - 1;
+    if (m[0] === "%%") {
+      out += "%";
+      continue;
+    }
+    next = m[1] ? Number(m[1]) : next + 1;
+    if (next > nArgs) return null;
+    out += m[2] === "I" ? ident : value;
+  }
+  return out;
+}
+
+const STRING_LITERAL = /^'((?:[^']|'')*)'$/;
+const DOLLAR_LITERAL = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$([\s\S]*)\$\1\$$/;
+
+/** The text of a plain `'…'` or dollar-quoted string literal, or null. */
+function literalText(s: string): string | null {
+  const q = STRING_LITERAL.exec(s);
+  if (q) return q[1]!.replace(/''/g, "'");
+  return DOLLAR_LITERAL.exec(s)?.[2] ?? null;
+}
+const FOREACH_LITERAL = new RegExp(
+  String.raw`\bforeach\s+(${IDENT})\s+in\s+array\s+array\s*\[[^\]]*\]\s*(?:::\s*(?:text|varchar|name)\s*\[\s*\]\s*)?$`,
+  "i",
+);
+
+/**
+ * Reads a DO block body for `execute` statements. In `foreach v in array array['a', …] loop`
+ * (top level, every element a string literal), `execute format('<literal>', v, …)` (or a
+ * dollar-quoted format string) is expanded
+ * into the SQL it runs for each element, in the order Postgres runs it. Every other `execute`
+ * is returned as unknown, but only when the block mentions row level security at all.
+ */
+function doBlockExecutes(body: string, base: number) {
+  const masked = maskSql(body, true);
+  const commentless = maskSql(body, false);
+  const expanded: Array<{ at: number; stmts: Array<{ stmt: SqlStatement; pin: number }> }> = [];
+  const unknown: number[] = [];
+
+  // Loop spans, from the `loop` keyword to its `end loop`.
+  const loops: Array<{ head: number; bodyStart: number; end: number; top: boolean }> = [];
+  const stack: Array<{ head: number; bodyStart: number }> = [];
+  for (const m of masked.matchAll(/\b(end\s+loop|loop)\b/gi)) {
+    if (/^end/i.test(m[1]!)) {
+      const open = stack.pop();
+      if (open) loops.push({ ...open, end: m.index, top: stack.length === 0 });
+    } else stack.push({ head: m.index, bodyStart: m.index + m[0].length });
+  }
+
+  const executes: number[] = [];
+  for (const m of masked.matchAll(/\bexecute\b/gi)) {
+    if (/(?:^|;|\b(?:begin|loop|then|else)|>>)\s*$/i.test(masked.slice(0, m.index))) executes.push(m.index);
+  }
+  const handled = new Set<number>();
+  for (const loop of loops) {
+    if (!loop.top) continue;
+    const headStart = masked.lastIndexOf(";", loop.head) + 1;
+    const head = FOREACH_LITERAL.exec(masked.slice(headStart, loop.head));
+    if (!head) continue;
+    const open = headStart + head.index + head[0].indexOf("[");
+    const values: string[] = [];
+    for (const [a, b] of topLevelCommas(masked, open + 1, masked.indexOf("]", open))) {
+      const lit = STRING_LITERAL.exec(commentless.slice(a, b).trim());
+      if (!lit) {
+        values.length = 0;
+        break;
+      }
+      values.push(lit[1]!.replace(/''/g, "'"));
+    }
+    if (values.length === 0) continue;
+    const loopVar = normaliseIdent(head[1]!);
+    const inLoop = executes.filter(
+      (x) => x > loop.bodyStart && x < loop.end && !loops.some((l) => !l.top && x > l.bodyStart && x < l.end),
+    );
+    const formats: Array<{ at: number; fmt: string; n: number }> = [];
+    for (const x of inLoop) {
+      const semi = masked.indexOf(";", x);
+      const end = semi < 0 ? masked.length : semi;
+      const fm = /^execute\s+format\s*\(/i.exec(masked.slice(x, end));
+      const paren = fm ? x + fm[0].length - 1 : -1;
+      const close = fm ? closingParen(masked, paren) : -1;
+      if (close < 0 || close > end || masked.slice(close + 1, end).trim() !== "") continue;
+      const [first, ...rest] = topLevelCommas(masked, paren + 1, close).map(([a, b]) => commentless.slice(a, b).trim());
+      const fmt = literalText(first ?? "");
+      const varOnly = rest.length > 0 && rest.every((r) => new RegExp(`^${IDENT}$`).test(r) && normaliseIdent(r) === loopVar);
+      if (fmt === null || !varOnly) continue;
+      if (values.some((v) => formatSql(fmt, rest.length, v) === null)) continue;
+      formats.push({ at: base + x, fmt, n: rest.length });
+      handled.add(x);
+    }
+    const stmts = values.flatMap((v) =>
+      formats.flatMap((f) => splitStatements(formatSql(f.fmt, f.n, v)!).map((stmt) => ({ stmt, pin: f.at }))),
+    );
+    if (stmts.length > 0) expanded.push({ at: base + loop.end, stmts });
+  }
+  if (/\brow\s+level\s+security\b/i.test(commentless)) {
+    for (const x of executes) if (!handled.has(x)) unknown.push(base + x);
+  }
+  return { expanded, unknown };
+}
+
 /** Replays every migration in order and returns the final state of each table, view and function. */
 export function replayMigrations(project: ProjectFiles): MigrationState {
   const tables = new Map<string, TableState>();
@@ -344,21 +470,35 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
   const defaultRevoked = new Map<string, Set<string>>();
   const files = migrationFiles(project);
 
-  const apply = (stmt: SqlStatement, file: string) => {
+  /** `pin`: the statement was expanded from a DO block's `execute`, so report everything at that offset. */
+  const apply = (stmt: SqlStatement, file: string, pin?: number) => {
+    const at = (offset: number) => pin ?? offset;
     // Inside DO blocks and functions, the first statement carries the block's `begin`.
     const t = stmt.text.replace(/^begin\s+(?!transaction|work)/i, "");
     let m: RegExpExecArray | null;
 
     if (/^do\b/i.test(t)) {
       const body = dollarBody(stmt);
-      if (body) for (const inner of splitStatements(body.body, body.offset)) apply(inner, file);
+      if (!body) return;
+      const { expanded, unknown } = doBlockExecutes(body.body, body.offset);
+      const steps: Array<{ at: number; run: () => void }> = [
+        ...splitStatements(body.body, body.offset).map((inner) => ({ at: inner.offset, run: () => apply(inner, file, pin) })),
+        ...expanded.map((e) => ({ at: e.at, run: () => e.stmts.forEach((x) => apply(x.stmt, file, pin ?? x.pin)) })),
+        ...unknown.map((offset) => ({
+          at: offset,
+          run: () => {
+            for (const tbl of tables.values()) if (!tbl.rlsEnabled) tbl.rlsDynamic ??= { file, offset: pin ?? offset };
+          },
+        })),
+      ];
+      for (const s of steps.sort((a, b) => a.at - b.at)) s.run();
       return;
     }
     if ((m = CREATE_VIEW.exec(t))) {
       if (m[1]) return; // temporary views live in a session's own schema
       const { schema, name, key } = normaliseName(m[2]!);
       // CREATE OR REPLACE VIEW replaces the options too, so an earlier ALTER VIEW SET is lost.
-      views.set(key, { schema, name, file, offset: tokenOffset(stmt), ...viewParts(stmt), apiRevoked: false });
+      views.set(key, { schema, name, file, offset: at(tokenOffset(stmt)), ...viewParts(stmt), apiRevoked: false });
       return;
     }
     if ((m = ALTER_VIEW.exec(t))) {
@@ -387,7 +527,7 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
         schema,
         name,
         file,
-        offset: tokenOffset(stmt),
+        offset: at(tokenOffset(stmt)),
         securityDefiner: lastSecurity(rest) === "definer",
         searchPath: SETS_SEARCH_PATH.test(rest),
         returnsTrigger: /\breturns\s+"?(?:trigger|event_trigger)\b/i.test(rest),
@@ -441,7 +581,7 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
           schema,
           name,
           file,
-          offset: stmt.offset,
+          offset: at(stmt.offset),
           rlsEnabled: false,
           apiRevoked: false,
           temporary: /^temp/i.test(m[1] ?? ""),
@@ -454,7 +594,7 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
     if ((m = CREATE_POLICY.exec(t))) {
       const tbl = tables.get(normaliseName(m[2]!).key);
       if (!tbl) return;
-      const parts = policyParts(stmt, file);
+      const parts = policyParts(stmt, file, pin);
       const name = normaliseIdent(m[1]!);
       tbl.policies.set(name, {
         name,
@@ -464,7 +604,7 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
         using: parts.using,
         check: parts.check,
         file,
-        offset: stmt.offset,
+        offset: at(stmt.offset),
       });
       return;
     }
@@ -478,7 +618,7 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
         tbl.policies.set(pol.name, pol);
         return;
       }
-      const parts = policyParts(stmt, file);
+      const parts = policyParts(stmt, file, pin);
       if (parts.roles) pol.roles = parts.roles;
       if (parts.using) pol.using = parts.using;
       if (parts.check) pol.check = parts.check;
@@ -513,7 +653,10 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
     }
     if ((m = ALTER_RLS.exec(t))) {
       const tbl = tables.get(normaliseName(m[1]!).key);
-      if (tbl) tbl.rlsEnabled = m[2]!.toLowerCase() === "enable";
+      if (tbl) {
+        tbl.rlsEnabled = m[2]!.toLowerCase() === "enable";
+        tbl.rlsDynamic = undefined;
+      }
       return;
     }
     if ((m = RENAME.exec(t))) {

@@ -88,7 +88,8 @@ export function scan(root: string, config: Config, rules: Rule[], extras: { osv?
 function dedupe(findings: Finding[]): Finding[] {
   const seen = new Set<string>();
   return findings.filter((f) => {
-    const key = `${f.ruleId}|${f.file}|${f.line}|${f.column}`;
+    // The title is part of the key: one DO block statement can create policies on several tables.
+    const key = `${f.ruleId}|${f.file}|${f.line}|${f.column}|${f.title}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

@@ -71,7 +71,7 @@ Calling OpenAI, Anthropic or another model provider straight from the browser me
 
 Supabase serves every table in the public schema through its Data API, and the anon key that calls it ships in your frontend. Without row-level security, anyone can read and change the whole table with that key. Turning RLS on with no policies blocks all API access until you add policies.
 
-**Checks:** Supabase SQL migrations (`supabase/migrations/*.sql`), in order, including later `enable` and `disable`, renames and drops.
+**Checks:** Supabase SQL migrations (`supabase/migrations/*.sql`), in order, including later `enable` and `disable`, renames and drops. In a `do` block, a `foreach <var> in array array['a', 'b'] loop` that runs `execute format('<SQL>', <var>)` is read as the SQL it runs for each name (`%I`, `%s`, `%1$I` and `%1$s`). If a `do` block that mentions row level security runs any other `execute` (table names looked up when it runs, an array or format string held in a variable), tables created before it without RLS are reported at low confidence.
 
 ## SW-D02
 
@@ -79,7 +79,7 @@ Supabase serves every table in the public schema through its Data API, and the a
 
 Turning on row-level security only helps if the policies actually restrict rows. A policy with `using (true)` or `with check (true)` lets every caller through, so the table is as open as if RLS were off. Checking only that someone is logged in (`auth.uid() is not null`) is nearly as open, because anyone can sign up. Policies should compare the row with the caller, usually `auth.uid() = user_id`. A table that is genuinely public, such as a product list, can keep a `using (true)` read policy: mark it with a `seaworthy-ignore` comment saying so.
 
-**Checks:** Policies in Supabase SQL migrations or `supabase db dump` output whose `using` or `with check` is always true or only checks that someone is logged in.
+**Checks:** Policies in Supabase SQL migrations or `supabase db dump` output whose `using` or `with check` is always true or only checks that someone is logged in. Policies created by a `do` block loop that SW-D01 can read are checked too, with one finding per table at the `execute` line.
 
 ## SW-D03
 
