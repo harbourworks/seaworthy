@@ -135,7 +135,7 @@ API routes and server actions are public URLs: anyone can call them with curl, w
 
 Checking that someone is logged in is not the same as checking the record is theirs. A route that loads, edits or deletes a record by the ID in the URL lets any signed-in user reach anyone's data by changing the number (an IDOR). This matters most with database access that skips row-level security: the Supabase service-role client, Prisma and Drizzle. With the normal Supabase client, row-level security does this job (see SW-D01 and SW-D02).
 
-**Checks:** Next.js handlers that read, change or delete a record by an ID from the request, through Supabase's admin client, Prisma or Drizzle, without an owner filter.
+**Checks:** Next.js handlers that read, change or delete a record by an ID from the request, through Supabase's admin client, Prisma or Drizzle, without an owner filter. IDs returned by an awaited `auth.admin.createUser`, `auth.admin.inviteUserByEmail` or `.insert(...).select()` (with or without `.single()` or `.maybeSingle()`) aren't request input. A role or permission guard before the query counts as authorisation, so the handler isn't flagged: a statement in the handler's own body that calls `requireRole`, `requireAdmin` or `requirePermission` (or the plural), `assertRole`, `assertAdmin`, `assertPermission` or `ensureAdmin`, or an `if` there that throws, returns or calls `redirect`, `permanentRedirect`, `notFound`, `forbidden` or `unauthorized` when `!isAdmin(...)`, `!hasRole(...)` or `!can(...)`, or when a `role` that doesn't come from the request is not `"admin"`, `"owner"` or `"manager"`. A sign-in check alone (`requireUser`, `requireAuth`, `getUser`) doesn't count.
 
 ## SW-A03
 
