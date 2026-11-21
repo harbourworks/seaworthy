@@ -1608,6 +1608,126 @@ describe("SW-A03 costly endpoint with no rate limit", () => {
       run({ "middleware.ts": "const rl = new Ratelimit({});\nexport async function middleware(req) { await rl.limit(ip); }\n", "app/api/c/route.ts": chat.replace("CHECK", "") }).all,
     ).toEqual([]);
   });
+
+  describe("limiter helpers named with rate-limit inside a longer name", () => {
+    const A03 = resolve(__dirname, "../fixtures/rules/sw-a03");
+    const at = (root: string) =>
+      scan(root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES).findings.filter((f) => f.ruleId === "SW-A03");
+    const chat = (check: string, head = "") =>
+      head + "export async function POST(req: Request) {\n" + (check ? `  ${check}\n` : "") +
+      "  return Response.json(await openai.chat.completions.create({}));\n}\n";
+    const helper = (name: string) =>
+      `const hits = new Map<string, number>();\nexport function ${name}(key: string): boolean {\n` +
+      "  const n = (hits.get(key) ?? 0) + 1;\n  hits.set(key, n);\n  return n > 10;\n}\n";
+    const middleware = (name: string, spec: string) =>
+      `import { NextResponse } from "next/server";\nimport { ${name} } from "${spec}";\n` +
+      `export function middleware(request) {\n  if (${name}(request.ip)) return new NextResponse("Too Many Requests", { status: 429 });\n` +
+      "  return NextResponse.next();\n}\n";
+
+    it("fixed fixture (the issue's reproduction): isRateLimited in middleware, so nothing is flagged", () => {
+      expect(at(join(A03, "fixed"))).toEqual([]);
+    });
+    it("decoy fixture: checkRateLimit(...) in the route and apiRateLimit in an imported helper", () => {
+      expect(at(join(A03, "decoy"))).toEqual([]);
+    });
+    it("vulnerable fixture: email and AI routes with no limiter, including one that only says unlimitedPlan", () => {
+      const f = at(join(A03, "vulnerable"));
+      expect(f.map((x) => `${x.file}:${x.line} ${x.severity}/${x.confidence}`)).toEqual([
+        "src/app/api/invite/route.ts:3 medium/high",
+        "src/app/api/summarise/route.ts:6 medium/high",
+      ]);
+      const [invite, summarise] = f;
+      expect(invite!.title).toBe("POST /api/invite has no rate limit");
+      expect(invite!.why).toBe(
+        "This endpoint sends email, so anyone can use it to spam people from your domain and burn your sending " +
+          "reputation. Nothing limits how often one user or IP address can call it.",
+      );
+      expect(invite!.fix).toMatch(/^Add a per-user or per-IP limit before the expensive work, for example with @upstash\/ratelimit /);
+      expect(invite!.fixPrompt).toMatch(
+        /^In src\/app\/api\/invite\/route\.ts, the POST handler sends email, so anyone can use it to spam people from your domain and burn your sending reputation, and it has no rate limit\. /,
+      );
+      expect(summarise!.title).toBe("POST /api/summarise has no rate limit");
+      expect(summarise!.why).toMatch(/^This endpoint calls a paid AI model, so anyone can run up your bill/);
+    });
+    it("recognises checkRateLimit(...), isRateLimited(...) and apiRateLimit in the handler", () => {
+      expect(run({ "app/api/a/route.ts": chat("if (!(await checkRateLimit(ip))) return new Response(null, { status: 429 });") }).all).toEqual([]);
+      expect(run({ "app/api/a/route.ts": chat("if (isRateLimited(ip)) return new Response(null, { status: 429 });") }).all).toEqual([]);
+      expect(run({ "app/api/a/route.ts": chat("const { success } = await apiRateLimit.limit(ip);") }).all).toEqual([]);
+      expect(run({ "app/api/a/route.ts": chat("if (isResetRateLimited(email)) return new Response(null, { status: 429 });") }).all).toEqual([]);
+    });
+    it("recognises those helpers in middleware and in a local module the route imports", () => {
+      for (const name of ["isRateLimited", "checkRateLimit"]) {
+        expect(
+          run({ "lib/limits.ts": helper(name), "middleware.ts": middleware(name, "@/lib/limits"), "app/api/a/route.ts": chat("") }).all,
+        ).toEqual([]);
+        expect(
+          run({
+            "lib/guard.ts": `const apiLimits = new Map();\nexport function guard(ip: string) { return ${name}(ip); }\n${helper(name)}`,
+            "app/api/a/route.ts": chat("if (guard(ip)) return new Response(null, { status: 429 });", "import { guard } from '@/lib/guard';\n"),
+          }).all,
+        ).toEqual([]);
+      }
+    });
+    it("recognises an import from @/lib/rate-limit, ./rate_limit or ~/utils/rateLimiter", () => {
+      for (const spec of ["@/lib/rate-limit", "../../../lib/rate_limit", "~/utils/rateLimiter"]) {
+        expect(
+          run({ "app/api/a/route.ts": chat("if (hit(ip)) return new Response(null, { status: 429 });", `import { hit } from "${spec}";\n`) }).all,
+        ).toEqual([]);
+      }
+      expect(run({ "src/middleware.ts": middleware("tooMany", "@/lib/rate-limit"), "src/app/api/a/route.ts": chat("") }).all).toEqual([]);
+    });
+    it("recognises RATE_LIMIT constants and a Ratelimit class", () => {
+      expect(run({ "app/api/a/route.ts": chat("if (count > API_RATE_LIMIT) return new Response(null, { status: 429 });") }).all).toEqual([]);
+      expect(run({ "app/api/a/route.ts": chat("await new ApiRatelimiter(ip).check();") }).all).toEqual([]);
+    });
+    it("still reports a route with no limiter anywhere", () => {
+      expect(run({ "lib/limits.ts": helper("isRateLimited"), "app/api/a/route.ts": chat("") }).all).toEqual(["app/api/a/route.ts:1"]);
+      expect(run({ "middleware.ts": middleware("isBlocked", "@/lib/blocklist"), "app/api/a/route.ts": chat("") }).all).toEqual([
+        "app/api/a/route.ts:1",
+      ]);
+    });
+    it("does not count words that only contain the letters, such as unlimitedPlan, accurateLimit or generateLimit", () => {
+      for (const check of [
+        "const plan = user.unlimitedPlan ? 'team' : 'free';",
+        "const accurateLimit = 4000;",
+        "const max = generateLimit(plan);",
+        "const separateLimits = { a: 1 };",
+        "// rate limiting is handled by the CDN",
+        "const migrateLimit = 3;",
+      ]) {
+        expect(run({ "app/api/a/route.ts": chat(check) }).all, check).toEqual(["app/api/a/route.ts:1"]);
+      }
+    });
+    it("says 'any signed-in user' instead of 'anyone' when the handler checks auth", () => {
+      const authed = run({
+        "app/api/a/route.ts": chat("const session = await getServerSession(authOptions);\n  if (!session) return new Response(null, { status: 401 });"),
+        "app/api/b/route.ts": "export async function POST(req: Request) {\n  await resend.emails.send({ to, subject });\n}\n",
+      });
+      expect(authed.all).toEqual(["app/api/a/route.ts:1", "app/api/b/route.ts:1"]);
+      expect(authed.whys.find((w) => w.includes("paid AI model"))).toBe(
+        "This endpoint calls a paid AI model, so any signed-in user can run up your bill by calling it in a loop. " +
+          "Nothing limits how often one user or IP address can call it.",
+      );
+      expect(authed.whys.find((w) => w.includes("sends email"))).toMatch(/^This endpoint sends email, so anyone can use it/);
+    });
+    it("uses the signed-in wording in the AI prompt too, and for a withAuth(...) wrapper", () => {
+      const p = project({
+        ...next,
+        "pages/api/reset.ts":
+          "export default withAuth(async (req, res) => {\n  const ok = await bcrypt.compare(req.body.old, user.hash);\n  res.json({ ok });\n});\n",
+      });
+      const f = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES).findings.filter((x) => x.ruleId === "SW-A03");
+      p.done();
+      expect(f.map((x) => `${x.file}:${x.line}`)).toEqual(["pages/api/reset.ts:1"]);
+      expect(f[0]!.why).toBe(
+        "This endpoint checks passwords, so without a limit any signed-in user can try thousands of guesses. " +
+          "Nothing limits how often one user or IP address can call it.",
+      );
+      expect(f[0]!.fixPrompt).toMatch(
+        /^In pages\/api\/reset\.ts, the handler checks passwords, so without a limit any signed-in user can try thousands of guesses, and it has no rate limit\. /,
+      );
+    });
+  });
 });
 
 describe("SW-L03 agent tool with shell, file or code access", () => {

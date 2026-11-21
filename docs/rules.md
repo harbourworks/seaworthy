@@ -143,7 +143,7 @@ Checking that someone is logged in is not the same as checking the record is the
 
 Endpoints that call paid AI models, send email or SMS, or check passwords are the ones attackers script: a loop of requests can cost you hundreds of pounds overnight or crack a weak password. A rate limit per user or IP stops that. Checks that need a login still need a limit, because accounts are free.
 
-**Checks:** Next.js handlers and server actions that call paid AI models, send email or SMS, or check passwords, with no rate limiter in the handler, a local helper or middleware.
+**Checks:** Next.js handlers and server actions that call paid AI models, send email or SMS, or check passwords, with no rate limiter in the handler, a local module it imports or the middleware file (`middleware.ts` or `.js` at the root or in `src/`). A limiter is a known library (`@upstash/ratelimit`, `express-rate-limit`, `rate-limiter-flexible`, Arcjet), a name with a "rate limit" part (`rateLimit`, `isRateLimited`, `checkRateLimit`, `API_RATE_LIMIT`, an import from `@/lib/rate-limit`, but not `accurateLimit`), or `limiter`, `throttle` or `slowDown`. When the handler checks who is signed in, the finding says any signed-in user could abuse it rather than anyone.
 
 ## SW-A04
 

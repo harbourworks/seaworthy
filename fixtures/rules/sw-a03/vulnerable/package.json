@@ -1,0 +1,10 @@
+{
+  "name": "sw-a03-fixture",
+  "private": true,
+  "dependencies": {
+    "next": "15.0.0",
+    "nodemailer": "6.9.0",
+    "openai": "4.70.0",
+    "react": "19.0.0"
+  }
+}
