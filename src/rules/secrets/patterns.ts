@@ -170,6 +170,24 @@ export function isPlaceholder(value: string): boolean {
   return PLACEHOLDER_RE.test(value);
 }
 
+/**
+ * Hosts reserved for documentation and testing (RFC 2606, RFC 6761): example.com, .org and
+ * .net and their subdomains, and anything under .example, .test, .invalid or .localhost.
+ * No real database can be reached at one.
+ */
+const RESERVED_HOST_RE = /(^|\.)example\.(com|org|net)$|\.(example|test|invalid|localhost)$/;
+
+export function isReservedExampleHost(host: string): boolean {
+  return RESERVED_HOST_RE.test(host.toLowerCase().replace(/\.$/, ""));
+}
+
+/** Passwords that tutorials and generated code use as stand-ins in connection strings. */
+const PLACEHOLDER_DB_PASSWORDS = new Set(["password", "pass", "secret", "postgres", "root", "admin", "changeme"]);
+
+export function isPlaceholderDbPassword(password: string): boolean {
+  return PLACEHOLDER_DB_PASSWORDS.has(password.toLowerCase());
+}
+
 export function shannonEntropy(s: string): number {
   if (s.length === 0) return 0;
   const counts = new Map<string, number>();

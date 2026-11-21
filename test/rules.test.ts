@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { scan } from "../src/core/scan.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { RULES } from "../src/rules/index.js";
-import { redact } from "../src/rules/secrets/patterns.js";
+import { isPlaceholderDbPassword, isReservedExampleHost, redact } from "../src/rules/secrets/patterns.js";
 
 const FIXTURES = resolve(__dirname, "../fixtures/apps");
 const ids = (r: ReturnType<typeof scan>) => r.findings.map((f) => `${f.ruleId} ${f.file}:${f.line}`).sort();
@@ -513,6 +513,86 @@ describe("SW-D05 view or security definer function that bypasses RLS", () => {
       "1.sql:1 medium",
     ]);
     expect(run("create function f() returns text language sql as $$ select 'security definer' $$;")).toEqual([]);
+  });
+});
+
+describe("SW-S01 database URLs at reserved example hosts or with placeholder passwords (#31)", () => {
+  const S01 = resolve(__dirname, "../fixtures/rules/sw-s01");
+  const low = { ...DEFAULT_CONFIG, minConfidence: "low" as const };
+  const s01 = (root: string) =>
+    scan(root, low, RULES)
+      .findings.filter((f) => f.ruleId === "SW-S01")
+      .map((f) => `${f.file}:${f.line}:${f.column} ${f.severity} ${f.confidence} ${f.title}`)
+      .sort();
+  const urls = (lines: string[]) => {
+    const p = project({ "src/db.ts": lines.map((u, i) => `export const U${i} = "${u}";`).join("\n") + "\n" });
+    const r = s01(p.root);
+    p.done();
+    return r;
+  };
+
+  describe("isReservedExampleHost", () => {
+    it.each(["example.com", "example.org", "example.net", "EXAMPLE.COM", "db.example.com", "a.b.example.org", "pg.example.net", "db.example", "db.test", "db.invalid", "db.localhost", "DB.Example.Com", "db.example.com."])(
+      "%s is reserved",
+      (host) => expect(isReservedExampleHost(host)).toBe(true),
+    );
+    it.each(["notexample.com", "myexample.org", "example.com.attacker.io", "db.example.co", "db.testing", "test", "example", "db.supabase.co", "examples.net"])(
+      "%s is not reserved",
+      (host) => expect(isReservedExampleHost(host)).toBe(false),
+    );
+  });
+
+  describe("isPlaceholderDbPassword", () => {
+    it.each(["password", "pass", "secret", "postgres", "root", "admin", "changeme", "PASSWORD", "Secret", "Admin"])("%s is a placeholder", (pw) =>
+      expect(isPlaceholderDbPassword(pw)).toBe(true),
+    );
+    it.each(["password1", "secret123", "mypassword", "rootroot", "p4ssword", "admin!"])("%s is not a placeholder", (pw) =>
+      expect(isPlaceholderDbPassword(pw)).toBe(false),
+    );
+  });
+
+  it("the issue's reproduction (decoy fixture): no SW-S01 finding", () => expect(s01(join(S01, "decoy"))).toEqual([]));
+  it("fixed fixture: nothing flagged", () => expect(s01(join(S01, "fixed"))).toEqual([]));
+  it("vulnerable fixture: a high-entropy password at a real host is still critical, high confidence, at the password", () => {
+    expect(s01(join(S01, "vulnerable"))).toEqual(["scripts/deploy.ts:2:33 critical high Database password committed"]);
+    const f = scan(join(S01, "vulnerable"), low, RULES).findings.find((x) => x.ruleId === "SW-S01")!;
+    expect(f.why).toBe(
+      "This connection string includes the password for the database at db.s01fixture.supabase.co. Anyone who can read this repo can connect to it directly, with no app or row-level security in the way.",
+    );
+    expect(f.fix).toBe("Change the database password now. Then put the connection string in a server-side environment variable.");
+    expect(f.fixPrompt).toMatch(/^In scripts\/deploy\.ts, a database connection string with a password is written directly into the code\. /);
+  });
+  it("every reserved host suffix is skipped, whatever the password", () => {
+    const pw = rand(20);
+    expect(
+      urls(
+        ["example.com", "example.org", "example.net", "db.example.com", "db.example.org", "db.example.net", "db.example", "db.test", "db.invalid", "db.localhost"].map(
+          (h) => `postgres://app:${pw}@${h}:5432/app`,
+        ),
+      ),
+    ).toEqual([]);
+  });
+  it("every placeholder password is skipped, at a real host, in any case", () => {
+    expect(
+      urls(["password", "pass", "secret", "postgres", "root", "admin", "changeme", "Password", "ROOT"].map((pw) => `postgresql://app:${pw}@db.s01test.supabase.co:5432/app`)),
+    ).toEqual([]);
+  });
+  it("near misses are still reported: lookalike hosts, and placeholder words inside a longer password", () => {
+    const pw = rand(20);
+    const word = "secret" + "123"; // split so this file isn't flagged by the self-scan
+    expect(
+      urls([
+        `postgres://app:${pw}@notexample.com/app`,
+        `postgres://app:${pw}@db.myexample.org/app`,
+        `postgres://app:${pw}@example.com.prod-db.io/app`,
+        `mysql://admin:${word}@db.s01test.supabase.co/app`,
+      ]),
+    ).toEqual([
+      "src/db.ts:1:35 critical high Database password committed",
+      "src/db.ts:2:35 critical high Database password committed",
+      "src/db.ts:3:35 critical high Database password committed",
+      "src/db.ts:4:34 critical high Database password committed",
+    ]);
   });
 });
 

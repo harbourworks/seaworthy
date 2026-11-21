@@ -8,6 +8,8 @@ import {
   SECRET_PATTERNS,
   decodeJwtPayload,
   isPlaceholder,
+  isPlaceholderDbPassword,
+  isReservedExampleHost,
   shannonEntropy,
 } from "./patterns.js";
 
@@ -198,8 +200,8 @@ function scanText(file: string, text: string, at: (offset: number) => { line: nu
 
   for (const m of text.matchAll(DB_URL_RE)) {
     const [, , password, host] = m as unknown as [string, string, string, string];
-    if (LOCAL_HOSTS.has(host.toLowerCase()) || host.endsWith(".local")) continue;
-    if (isPlaceholder(password) || password.startsWith("$") || password.length < 6) continue;
+    if (LOCAL_HOSTS.has(host.toLowerCase()) || host.endsWith(".local") || isReservedExampleHost(host)) continue;
+    if (isPlaceholder(password) || isPlaceholderDbPassword(password) || password.startsWith("$") || password.length < 6) continue;
     out.push({
       title: "Database password committed",
       severity: "critical",
