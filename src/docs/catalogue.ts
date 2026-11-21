@@ -31,7 +31,8 @@ export const COVERAGE: Record<string, string> = {
   "SW-P02": "Amounts, prices and discounts in Stripe create and update calls that come from request input.",
   "SW-A01": "Next.js route handlers and server actions that change data or use an admin database client without checking who is calling.",
   "SW-A02": "Next.js handlers that read, change or delete a record by an ID from the request, through Supabase's admin client, Prisma or Drizzle, without an owner filter.",
-  "SW-A03": "Next.js handlers and server actions that call paid AI models, send email or SMS, or check passwords, with no rate limiter in the handler, a local helper or middleware.",
+  "SW-A03":
+    "Next.js handlers and server actions that call paid AI models, send email or SMS, or check passwords, with no rate limiter in the handler, a local module it imports or the middleware file (`middleware.ts` or `.js` at the root or in `src/`). A limiter is a known library (`@upstash/ratelimit`, `express-rate-limit`, `rate-limiter-flexible`, Arcjet), a name with a \"rate limit\" part (`rateLimit`, `isRateLimited`, `checkRateLimit`, `API_RATE_LIMIT`, an import from `@/lib/rate-limit`, but not `accurateLimit`), or `limiter`, `throttle` or `slowDown`. When the handler checks who is signed in, the finding says any signed-in user could abuse it rather than anyone.",
   "SW-A04": "Wildcard or echoed origins combined with credentials, in code (`cors()`, response headers) and in nginx config.",
   "SW-A05": "SQL strings built from request input and passed to query methods.",
   "SW-L01": "System prompts or instructions built from user input, in calls to model SDKs.",

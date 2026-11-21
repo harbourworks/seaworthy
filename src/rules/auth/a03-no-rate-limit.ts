@@ -1,7 +1,7 @@
 import type { ProjectFiles } from "../../core/project.js";
 import type { RawFinding, Rule } from "../types.js";
 import { astOf, codeFiles, importsOf, resolveImport } from "../code.js";
-import { APP_ROUTE_RE, PAGES_API_RE, handlers, routeUrl } from "./a01-no-auth-check.js";
+import { APP_ROUTE_RE, AUTH_WRAPPER_RE, Evidence, PAGES_API_RE, handlers, routeUrl } from "./a01-no-auth-check.js";
 
 /** What makes an endpoint worth abusing, and what it costs you. */
 const COSTLY: Array<{ re: RegExp; what: string }> = [
@@ -21,7 +21,13 @@ const COSTLY: Array<{ re: RegExp; what: string }> = [
 ];
 /** Rate limiting in code: libraries and the usual helper names. */
 const LIMITER_RE =
-  /\b(ratelimit|rateLimit|rateLimiter|RateLimiter|limiter|throttle|slowDown)\b|@upstash\/ratelimit|rate-limiter-flexible|express-rate-limit|\baj\.protect\s*\(|@arcjet|\bslidingWindow\s*\(|\bfixedWindow\s*\(|\btokenBucket\s*\(/i;
+  /\b(limiter|throttle|slowDown)\b|@upstash\/ratelimit|rate-limiter-flexible|express-rate-limit|\baj\.protect\s*\(|@arcjet|\bslidingWindow\s*\(|\bfixedWindow\s*\(|\btokenBucket\s*\(/i;
+/**
+ * "rate limit" as part of a name or path: isRateLimited, checkRateLimit, API_RATE_LIMIT, @/lib/rate-limit.
+ * "rate" must start a word or a camelCase part, so accurateLimit or generateLimit don't count.
+ */
+const RATE_LIMIT_NAME_RE = /(?:(?<![A-Za-z])[Rr]ate|Rate|RATE)[-_]?(?:[Ll]imit|LIMIT)/;
+const limits = (text: string) => LIMITER_RE.test(text) || RATE_LIMIT_NAME_RE.test(text);
 
 export const a03NoRateLimit: Rule = {
   id: "SW-A03",
@@ -52,14 +58,18 @@ export const a03NoRateLimit: Rule = {
       const serverActions = !appRoute && !pagesApi && /^\s*["']use server["']/m.test(text);
       if (!appRoute && !pagesApi && !serverActions) continue;
       if (!COSTLY.some((c) => c.re.test(text))) continue;
-      if (LIMITER_RE.test(text) || helpersLimit(project, file, text)) continue;
+      if (limits(text) || helpersLimit(project, file, text)) continue;
       const ast = astOf(file, text);
       if (!ast) continue;
       const url = routeUrl(file);
+      const evidence = new Evidence(project, file, text, ast);
       for (const h of handlers(ast, appRoute, pagesApi)) {
         const body = text.slice(h.fn.start ?? 0, h.fn.end ?? 0);
-        const cost = COSTLY.find((c) => c.re.test(body));
-        if (!cost) continue;
+        const found = COSTLY.find((c) => c.re.test(body));
+        if (!found) continue;
+        // Behind a login, the abuser is any account holder rather than anyone at all.
+        const signedIn = (h.wrapperName && AUTH_WRAPPER_RE.test(h.wrapperName)) || evidence.inFunction(h.fn);
+        const cost = signedIn ? { what: found.what.replace("anyone", "any signed-in user") } : found;
         const label = serverActions ? `Server action ${h.name}` : `${h.method ?? "Handler"} ${url ?? file}`;
         out.push({
           file,
@@ -85,14 +95,14 @@ export const a03NoRateLimit: Rule = {
 /** Middleware that rate-limits covers every route it runs on. */
 function middlewareLimits(project: ProjectFiles): boolean {
   const file = project.files.find((f) => /^(src\/)?middleware\.[cm]?[jt]s$/.test(f));
-  return !!file && LIMITER_RE.test(project.read(file) ?? "");
+  return !!file && limits(project.read(file) ?? "");
 }
 
 /** A local module the route imports does the limiting (for example lib/ratelimit.ts). */
 function helpersLimit(project: ProjectFiles, file: string, text: string): boolean {
   for (const spec of importsOf(file, text)) {
     const target = resolveImport(project, file, spec);
-    if (target && LIMITER_RE.test(project.read(target) ?? "")) return true;
+    if (target && limits(project.read(target) ?? "")) return true;
   }
   return false;
 }
