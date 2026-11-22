@@ -33,10 +33,10 @@ export const COVERAGE: Record<string, string> = {
   "SW-A02":
     "Next.js handlers that read, change or delete a record by an ID from the request, through Supabase's admin client, Prisma or Drizzle, without an owner filter. " +
     "IDs returned by an awaited `auth.admin.createUser`, `auth.admin.inviteUserByEmail` or `.insert(...).select()` (with or without `.single()` or `.maybeSingle()`) aren't request input. " +
-    "A role or permission guard before the query counts as authorisation, so the handler isn't flagged: a statement in the handler's own body that calls " +
+    "A role or permission guard before the query counts as authorisation, so the handler isn't flagged: a statement in the handler's own body that awaits a call to " +
     "`requireRole`, `requireAdmin` or `requirePermission` (or the plural), `assertRole`, `assertAdmin`, `assertPermission` or `ensureAdmin`, or an `if` there that throws, " +
     "returns or calls `redirect`, `permanentRedirect`, `notFound`, `forbidden` or `unauthorized` when `!isAdmin(...)`, `!hasRole(...)` or `!can(...)`, or when a `role` that doesn't come from the request " +
-    "is not `\"admin\"`, `\"owner\"` or `\"manager\"`. A sign-in check alone (`requireUser`, `requireAuth`, `getUser`) doesn't count.",
+    "is not `\"admin\"`, `\"owner\"` or `\"manager\"`. A guard call that isn't awaited doesn't count, and nor does a sign-in check alone (`requireUser`, `requireAuth`, `getUser`).",
   "SW-A03": "Next.js handlers and server actions that call paid AI models, send email or SMS, or check passwords, with no rate limiter in the handler, a local helper or middleware.",
   "SW-A04": "Wildcard or echoed origins combined with credentials, in code (`cors()`, response headers) and in nginx config.",
   "SW-A05": "SQL strings built from request input and passed to query methods.",

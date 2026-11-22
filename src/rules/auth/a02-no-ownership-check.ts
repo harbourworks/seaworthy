@@ -211,8 +211,9 @@ function roleGuardEnd(fn: Node, isTainted: (n: Node) => boolean): number {
   for (const st of body.body) {
     const calls =
       st.type === "ExpressionStatement" ? [st.expression] : st.type === "VariableDeclaration" ? st.declarations.map((d) => d.init) : [];
+    // Only an awaited guard stops the query: an un-awaited async helper's rejection is unhandled and the code runs on.
     const guarded =
-      calls.some((c) => !!c && ROLE_GUARD_CALL_RE.test(callName(c) ?? "")) ||
+      calls.some((c) => c?.type === "AwaitExpression" && ROLE_GUARD_CALL_RE.test(callName(c) ?? "")) ||
       (st.type === "IfStatement" && guardTest(st.test, isTainted) && exits(st.consequent));
     if (guarded) return st.end ?? 0;
   }

@@ -13,8 +13,8 @@ export async function renameTeammate(profileId: string, name: string) {
 /** The role is looked up but never acted on. */
 export async function suspendTeammate(profileId: string) {
   const user = await requireUser();
-  const admin = isAdmin(user);
-  console.log("suspend", profileId, admin);
+  const isAdminUser = isAdmin(user);
+  console.log("suspend", profileId, isAdminUser);
   const admin = createSupabaseAdmin();
   await admin.from("profiles").update({ suspended: true }).eq("id", profileId);
 }
@@ -35,4 +35,12 @@ export async function removeTeammate(profileId: string) {
   const admin = createSupabaseAdmin();
   await admin.from("profiles").delete().eq("id", profileId);
   await requireRole("admin");
+}
+
+/** The role check isn't awaited, so its rejection is unhandled and the update still runs. */
+export async function banTeammate(profileId: string) {
+  await requireUser();
+  requireRole("admin");
+  const admin = createSupabaseAdmin();
+  await admin.from("profiles").update({ banned: true }).eq("id", profileId);
 }
