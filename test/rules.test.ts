@@ -1580,6 +1580,116 @@ describe("SW-A02 record fetched by ID with no ownership check", () => {
   it("ignores IDs that don't come from the request", () => {
     expect(run({ "app/api/me/route.ts": route("await supabaseAdmin.from('profiles').select().eq('id', user.id).single();") }).all).toEqual([]);
   });
+
+  describe("server-created IDs and role guards (#37)", () => {
+    const A02 = resolve(__dirname, "../fixtures/rules/sw-a02");
+    const at = (root: string) =>
+      scan(root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES).findings.filter((f) => f.ruleId === "SW-A02");
+    const action = (body: string) =>
+      "'use server';\nimport { supabaseAdmin } from '@/lib/admin';\nexport async function act(profileId: string, email: string) {\n" + body + "\n}\n";
+
+    it("vulnerable fixture: sign-in only, and role checks that don't stop the query, are still flagged", () => {
+      const f = at(join(A02, "vulnerable"));
+      expect(f.map((x) => `${x.file}:${x.line} ${x.severity}/${x.confidence}`).sort()).toEqual([
+        "src/app/api/notes/[id]/route.ts:7 high/high",
+        "src/app/team/actions.ts:10 high/high",
+        "src/app/team/actions.ts:19 high/high",
+        "src/app/team/actions.ts:29 high/high",
+        "src/app/team/actions.ts:36 high/high",
+        "src/app/team/actions.ts:45 high/high",
+      ]);
+      const del = f.find((x) => x.line === 36)!;
+      expect(del.title).toBe("Server action removeTeammate deletes a record from profiles by ID without checking the owner");
+      expect(del.why).toContain("whose ID comes from the request (`profileId`)");
+      const ban = f.find((x) => x.line === 45)!;
+      expect(ban.title).toBe("Server action banTeammate changes a record from profiles by ID without checking the owner");
+    });
+    it("fixed fixture: owner filters and role guards that run first", () => {
+      expect(at(join(A02, "fixed"))).toEqual([]);
+    });
+    it("decoy fixture: the issue's addTeammate and setRole, and the other guard forms", () => {
+      expect(at(join(A02, "decoy"))).toEqual([]);
+    });
+
+    it("IDs returned by createUser, inviteUserByEmail and insert().select() aren't request input", () => {
+      const r = run({
+        "app/a.ts": action(
+          "  await requireUser();\n  const { data: created } = await supabaseAdmin.auth.admin.createUser({ email, password: profileId });\n" +
+            "  await supabaseAdmin.from('profiles').update({ x: 1 }).eq('id', created.user.id);",
+        ),
+        "app/b.ts": action(
+          "  await requireUser();\n  const invited = await supabaseAdmin.auth.admin.inviteUserByEmail(email);\n" +
+            "  await supabaseAdmin.from('profiles').update({ x: 1 }).eq('id', invited.data.user.id);",
+        ),
+        "app/c.ts": action(
+          "  await requireUser();\n  const { data: rows } = await supabaseAdmin.from('notes').insert({ email }).select();\n" +
+            "  await supabaseAdmin.from('notes').update({ x: 1 }).eq('id', rows[0].id);",
+        ),
+        "app/d.ts": action(
+          "  await requireUser();\n  let res;\n  res = await supabaseAdmin.auth.admin.createUser({ email });\n" +
+            "  await supabaseAdmin.from('profiles').update({ x: 1 }).eq('id', res.data.user.id);",
+        ),
+      });
+      expect(r.all).toEqual([]);
+    });
+    it("other awaited results stay tainted: an upsert by the request's ID, a lookup by email", () => {
+      const r = run({
+        "app/a.ts": action(
+          "  await requireUser();\n  const { data } = await supabaseAdmin.from('profiles').upsert({ id: profileId }).select().single();\n" +
+            "  await supabaseAdmin.from('profiles').update({ x: 1 }).eq('id', data.id);",
+        ),
+        "app/b.ts": action(
+          "  await requireUser();\n  const { data } = await supabaseAdmin.from('profiles').select('id').eq('email', email).single();\n" +
+            "  await supabaseAdmin.from('profiles').delete().eq('id', data.id);",
+        ),
+      });
+      expect(r.all).toEqual(["app/a.ts:6 high", "app/b.ts:6 high"]);
+    });
+    it("role guards that throw or return before the query count as authorisation", () => {
+      const q = "  await supabaseAdmin.from('profiles').delete().eq('id', profileId);";
+      const r = run({
+        "app/a.ts": action(`  await requireAdmin();\n${q}`),
+        "app/b.ts": action(`  await getUser();\n  const s = await requirePermissions('members:write');\n${q}`),
+        "app/c.ts": action(`  await getUser();\n  await assertRole('owner');\n${q}`),
+        "app/d.ts": action(`  await ensureAdmin(await getUser());\n${q}`),
+        "app/e.ts": action(`  const user = await getUser();\n  if (!(await ability.can('delete', 'Member'))) throw new Error('no');\n${q}`),
+        "app/f.ts": action(`  const user = await getUser();\n  if (!user || user?.role !== 'manager') { return { ok: false }; }\n${q}`),
+        "app/g.ts": action(`  const { role } = await getUser();\n  if (role != "admin" && role != "owner") notFound();\n${q}`),
+        "pages/api/members.ts":
+          "import { supabaseAdmin } from '@/lib/admin';\nexport default async function handler(req, res) {\n  const session = await getServerSession(req, res);\n" +
+          "  if (session.user.role !== 'admin') return res.status(403).end();\n  await supabaseAdmin.from('profiles').delete().eq('id', req.query.id);\n}\n",
+      });
+      expect(r.all).toEqual([]);
+    });
+    it("near-misses are still flagged: sign-in helpers, non-admin roles, no exit, nested, wrong way round, after the query", () => {
+      const q = "  await supabaseAdmin.from('profiles').delete().eq('id', profileId);";
+      const r = run({
+        "app/a.ts": action(`  await requireAuth();\n${q}`),
+        "app/b.ts": action(`  const user = await getUser();\n  if (user.role !== 'member') return;\n${q}`),
+        "app/c.ts": action(`  const user = await getUser();\n  if (!isAdmin(user)) console.warn('not admin');\n${q}`),
+        "app/d.ts": action(`  const user = await getUser();\n  if (user.ok) { await requireRole('admin'); }\n${q}`),
+        "app/e.ts": action(`  const user = await getUser();\n  if (user.role === 'admin') return;\n${q}`),
+        "app/f.ts": action(`  await getUser();\n${q}\n  await requireRole('admin');`),
+        "app/g.ts": action(`  const user = await getUser();\n  if (user.ok && user.role !== 'admin') return;\n${q}`),
+        "app/h.ts": action(`  const user = await getUser();\n  if (!isAdminPage) return;\n${q}`),
+        "app/i.ts": action(`  await getUser();\n  try { await requireRole('admin'); } catch { console.log('ignored'); }\n${q}`),
+        "app/j.ts": action(`  await getUser();\n  await requireRole('admin').catch(() => null);\n${q}`),
+        "app/k.ts":
+          "'use server';\nimport { supabaseAdmin } from '@/lib/admin';\nexport async function setRole(profileId: string, role: string) {\n" +
+          "  await getUser();\n  if (role !== 'admin' && role !== 'owner') throw new Error('invalid role');\n" +
+          "  await supabaseAdmin.from('profiles').update({ role }).eq('id', profileId);\n}\n",
+        // A guard that isn't awaited doesn't stop anything: an async helper's rejection is unhandled.
+        "app/l.ts": action(`  await getUser();\n  requireRole('admin');\n${q}`),
+        "app/m.ts": action(`  await getUser();\n  const s = requireAdmin();\n${q}`),
+        "app/n.ts": action(`  ensureAdmin(await getUser());\n${q}`),
+      });
+      expect(r.all).toEqual([
+        "app/a.ts:5 high", "app/b.ts:6 high", "app/c.ts:6 high", "app/d.ts:6 high", "app/e.ts:6 high",
+        "app/f.ts:5 high", "app/g.ts:6 high", "app/h.ts:6 high", "app/i.ts:6 high", "app/j.ts:6 high", "app/k.ts:6 high",
+        "app/l.ts:6 high", "app/m.ts:6 high", "app/n.ts:5 high",
+      ]);
+    });
+  });
 });
 
 describe("SW-P02 price or amount taken from the client", () => {

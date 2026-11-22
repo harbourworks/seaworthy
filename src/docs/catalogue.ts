@@ -30,7 +30,13 @@ export const COVERAGE: Record<string, string> = {
   "SW-P01":"Stripe webhook handlers that act on real Stripe event names without `constructEvent` or `events.retrieve`, in the file or a local helper it imports. A file that handles events but doesn't read a request body itself is skipped when a local file that imports it verifies, and otherwise reported at medium confidence.",
   "SW-P02": "Amounts, prices and discounts in Stripe create and update calls that come from request input.",
   "SW-A01": "Next.js route handlers and server actions that change data or use an admin database client without checking who is calling.",
-  "SW-A02": "Next.js handlers that read, change or delete a record by an ID from the request, through Supabase's admin client, Prisma or Drizzle, without an owner filter.",
+  "SW-A02":
+    "Next.js handlers that read, change or delete a record by an ID from the request, through Supabase's admin client, Prisma or Drizzle, without an owner filter. " +
+    "IDs returned by an awaited `auth.admin.createUser`, `auth.admin.inviteUserByEmail` or `.insert(...).select()` (with or without `.single()` or `.maybeSingle()`) aren't request input. " +
+    "A role or permission guard before the query counts as authorisation, so the handler isn't flagged: a statement in the handler's own body that awaits a call to " +
+    "`requireRole`, `requireAdmin` or `requirePermission` (or the plural), `assertRole`, `assertAdmin`, `assertPermission` or `ensureAdmin`, or an `if` there that throws, " +
+    "returns or calls `redirect`, `permanentRedirect`, `notFound`, `forbidden` or `unauthorized` when `!isAdmin(...)`, `!hasRole(...)` or `!can(...)`, or when a `role` that doesn't come from the request " +
+    "is not `\"admin\"`, `\"owner\"` or `\"manager\"`. A guard call that isn't awaited doesn't count, and nor does a sign-in check alone (`requireUser`, `requireAuth`, `getUser`).",
   "SW-A03": "Next.js handlers and server actions that call paid AI models, send email or SMS, or check passwords, with no rate limiter in the handler, a local helper or middleware.",
   "SW-A04": "Wildcard or echoed origins combined with credentials, in code (`cors()`, response headers) and in nginx config.",
   "SW-A05": "SQL strings built from request input and passed to query methods.",

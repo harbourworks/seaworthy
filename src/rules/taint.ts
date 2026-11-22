@@ -18,6 +18,12 @@ export interface TaintOptions {
   allParams?: boolean;
   /** Treat a destructured `{ params }` function parameter as tainted (route handlers). */
   routeParams?: boolean;
+  /**
+   * Awaited calls whose result is the server's own data, matched against the call's dotted
+   * chain of names (`client.from.insert.select`, arguments left out). A variable declared or
+   * assigned from one isn't tainted by the call's arguments.
+   */
+  serverResults?: RegExp;
 }
 
 export interface Taint {
@@ -45,10 +51,10 @@ export function analyseTaint(ast: Node, text: string, opts: TaintOptions): Taint
         const [value, setter] = id.elements;
         if (value?.type === "Identifier" && setter?.type === "Identifier") setters.set(setter.name, value.name);
       }
-      flows.push({ names: patternNames(id), from: n.init });
+      if (!serverResult(n.init, opts)) flows.push({ names: patternNames(id), from: n.init });
       if (id.type === "Identifier" && buildsString(n.init)) builders.set(id.name, n.init);
     }
-    if (n.type === "AssignmentExpression" && n.left.type === "Identifier") {
+    if (n.type === "AssignmentExpression" && n.left.type === "Identifier" && !serverResult(n.right, opts)) {
       flows.push({ names: [n.left.name], from: n.right });
     }
     if (n.type === "FunctionDeclaration" || n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression") {
@@ -111,6 +117,21 @@ export function analyseTaint(ast: Node, text: string, opts: TaintOptions): Taint
     }
   }
   return { isTainted: exprTainted, builders };
+}
+
+function serverResult(init: Node, opts: TaintOptions): boolean {
+  if (!opts.serverResults || init.type !== "AwaitExpression") return false;
+  const names: string[] = [];
+  let n: Node = init.argument;
+  for (;;) {
+    if (n.type === "CallExpression") n = n.callee as Node;
+    else if (n.type === "MemberExpression" && !n.computed && n.property.type === "Identifier") {
+      names.unshift(n.property.name);
+      n = n.object as Node;
+    } else break;
+  }
+  if (n.type === "Identifier") names.unshift(n.name);
+  return init.argument.type === "CallExpression" && opts.serverResults.test(names.join("."));
 }
 
 function calleeName(n: Node): string | null {

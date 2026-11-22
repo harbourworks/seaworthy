@@ -14,6 +14,23 @@ const OWNER_COL_RE =
 const IDENTITY_RE = /\b(user|session\.user|currentUser|me|viewer|claims|token|decoded|authUser)\??\.(id|uid|sub|userId|user_id)\b|\b(userId|uid|currentUserId)\b/;
 /** Filter columns that pick out one record by its ID. */
 const ID_COL_RE = /^(id|uuid|slug|key|[a-z]+_?id|[a-z]+Id)$/i;
+/**
+ * Awaited calls that return rows or users the server just made, so their IDs aren't request
+ * input: `auth.admin.createUser`, `auth.admin.inviteUserByEmail` and `.insert(...).select()`.
+ */
+const SERVER_RESULT_RE = /\.auth\.admin\.(createUser|inviteUserByEmail)$|\.insert\.select(\.(single|maybeSingle))?$/;
+/**
+ * Role or permission guards. A call to one of these as its own statement before the query counts as
+ * authorisation, because they throw when the caller lacks the role. Sign-in helpers such as
+ * `requireAuth`, `requireUser` and `getUser` don't match: they only say someone is signed in.
+ */
+const ROLE_GUARD_CALL_RE = /^(require(Role|Admin|Permission)s?|assert(Role|Admin|Permission)|ensureAdmin)$/;
+/** Role or permission tests that count when negated in `if (!isAdmin(user)) throw/return`. */
+const ROLE_TEST_CALL_RE = /^(isAdmin|hasRole|can)$/;
+/** Roles that `if (x.role !== "admin") throw/return` can require. */
+const GUARD_ROLES = new Set(["admin", "owner", "manager"]);
+/** Next.js helpers that throw to stop the request, so they end a guard like `return` does. */
+const NEXT_EXIT_RE = /^(redirect|permanentRedirect|notFound|forbidden|unauthorized)$/;
 const PRISMA_ONE = /^(findUnique|findUniqueOrThrow|findFirst|findFirstOrThrow|update|delete|upsert)$/;
 
 export const a02NoOwnershipCheck: Rule = {
@@ -45,7 +62,12 @@ export const a02NoOwnershipCheck: Rule = {
       const ast = astOf(file, text);
       if (!ast) continue;
       const evidence = new Evidence(project, file, text, ast);
-      const { isTainted } = analyseTaint(ast, text, { source: REQUEST_INPUT_RE, routeParams: true, allParams: serverActions });
+      const { isTainted } = analyseTaint(ast, text, {
+        source: REQUEST_INPUT_RE,
+        routeParams: true,
+        allParams: serverActions,
+        serverResults: SERVER_RESULT_RE,
+      });
       const src = (n: Node) => text.slice(n.start ?? 0, n.end ?? 0);
       const url = routeUrl(file);
 
@@ -57,7 +79,10 @@ export const a02NoOwnershipCheck: Rule = {
         // A comparison of the fetched record's owner anywhere in the handler counts.
         if (/(!==?|===?)/.test(body) && OWNER_COL_RE.test(body) && IDENTITY_RE.test(body)) continue;
 
+        // A role or permission guard before the query means the action is restricted on purpose.
+        const guardEnd = roleGuardEnd(h.fn, isTainted);
         for (const q of lookups(h.fn, src, isTainted, project, file, text)) {
+          if ((q.at.start ?? 0) >= guardEnd) continue;
           const label = serverActions ? `Server action ${h.name}` : `${h.method ?? "Handler"} ${url ?? file}`;
           out.push({
             file,
@@ -177,6 +202,64 @@ function lookups(
     }
   }
   return out;
+}
+
+/** Where the first top-level role or permission guard in a handler ends, or Infinity if there is none. */
+function roleGuardEnd(fn: Node, isTainted: (n: Node) => boolean): number {
+  const body = "body" in fn ? (fn.body as Node) : null;
+  if (body?.type !== "BlockStatement") return Infinity;
+  for (const st of body.body) {
+    const calls =
+      st.type === "ExpressionStatement" ? [st.expression] : st.type === "VariableDeclaration" ? st.declarations.map((d) => d.init) : [];
+    // Only an awaited guard stops the query: an un-awaited async helper's rejection is unhandled and the code runs on.
+    const guarded =
+      calls.some((c) => c?.type === "AwaitExpression" && ROLE_GUARD_CALL_RE.test(callName(c) ?? "")) ||
+      (st.type === "IfStatement" && guardTest(st.test, isTainted) && exits(st.consequent));
+    if (guarded) return st.end ?? 0;
+  }
+  return Infinity;
+}
+
+/**
+ * True if the condition fails for callers without the role: `!isAdmin(u)`, `u.role !== "admin"`, joined by
+ * `||` (or all by `&&`). A `role` from the request (`setRole(id, role)`) is the input being checked, not the caller's role.
+ */
+function guardTest(e: Node, isTainted: (n: Node) => boolean): boolean {
+  if (e.type === "LogicalExpression") {
+    if (e.operator === "||") return guardTest(e.left, isTainted) || guardTest(e.right, isTainted);
+    if (e.operator === "&&") return guardTest(e.left, isTainted) && guardTest(e.right, isTainted);
+    return false;
+  }
+  if (e.type === "UnaryExpression" && e.operator === "!") return ROLE_TEST_CALL_RE.test(callName(e.argument) ?? "");
+  if (e.type === "BinaryExpression" && (e.operator === "!==" || e.operator === "!=")) {
+    const sides = [e.left as Node, e.right];
+    return sides.some((x) => x.type === "StringLiteral" && GUARD_ROLES.has(x.value)) &&
+      // For `user.role`, ask about `user`: the property name alone could shadow a `role` parameter.
+      sides.some((x) => isRole(x) && !isTainted(x.type === "MemberExpression" || x.type === "OptionalMemberExpression" ? x.object : x));
+  }
+  return false;
+}
+
+function isRole(e: Node): boolean {
+  if (e.type === "Identifier") return e.name === "role";
+  return (e.type === "MemberExpression" || e.type === "OptionalMemberExpression") && !e.computed &&
+    e.property.type === "Identifier" && e.property.name === "role";
+}
+
+/** A throw, a return, or a Next.js helper that throws, directly or in a block. */
+function exits(st: Node): boolean {
+  if (st.type === "ThrowStatement" || st.type === "ReturnStatement") return true;
+  if (st.type === "ExpressionStatement") return NEXT_EXIT_RE.test(callName(st.expression) ?? "");
+  return st.type === "BlockStatement" && st.body.some(exits);
+}
+
+/** The called function's own name, through `await`: `requireRole`, `ability.can`. */
+function callName(e: Node): string | null {
+  const c = e.type === "AwaitExpression" ? e.argument : e;
+  if (c.type !== "CallExpression") return null;
+  const callee = c.callee;
+  if (callee.type === "Identifier") return callee.name;
+  return callee.type === "MemberExpression" && callee.property.type === "Identifier" ? callee.property.name : null;
 }
 
 interface ChainCall {
