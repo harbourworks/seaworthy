@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { ProjectFiles } from "../src/core/project.js";
@@ -392,6 +392,89 @@ describe("SW-X02 dependency that isn't on npm, or is brand new", () => {
         expect(lookups([".npmrc"])).toEqual(all); // the config's ignore still wins
       } finally {
         rmSync(outer, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("a project .npmrc that is a symlink (#33)", () => {
+    const deps = { name: "c3", dependencies: { "internal-billing-sdk": "^2.0.0", "@corp/ledger": "1.0.0", lodash: "4.17.21" } };
+    const all = ["@corp/ledger", "internal-billing-sdk", "lodash"];
+    /** A project in `<outer>/app` whose `.npmrc` (or `npmrcAt`) links to `target`, with `shared` files in `<outer>/shared`. */
+    const linked = (opts: { target: string | ((outer: string) => string); shared?: Record<string, string>; npmrcAt?: string; pkgAt?: string; ignore?: string[] }) => {
+      const outer = mkdtempSync(join(tmpdir(), "seaworthy-link-"));
+      const root = join(outer, "app");
+      mkdirSync(root);
+      for (const [p, c] of Object.entries(opts.shared ?? {})) {
+        mkdirSync(dirname(join(outer, "shared", p)), { recursive: true });
+        writeFileSync(join(outer, "shared", p), c);
+      }
+      const pkgAt = opts.pkgAt ?? "package.json";
+      mkdirSync(dirname(join(root, pkgAt)), { recursive: true });
+      writeFileSync(join(root, pkgAt), JSON.stringify(deps));
+      symlinkSync(typeof opts.target === "string" ? opts.target : opts.target(outer), join(root, opts.npmrcAt ?? ".npmrc"));
+      const ignore = opts.ignore ?? [];
+      const files = new ProjectFiles(root, walk(root, ignore).files, excluder(ignore));
+      return { root, files, done: () => rmSync(outer, { recursive: true, force: true }) };
+    };
+    const names = (opts: Parameters<typeof linked>[0]) => {
+      const p = linked(opts);
+      try {
+        return declaredDependencies(p.files).map((d) => d.name).sort();
+      } finally {
+        p.done();
+      }
+    };
+
+    it("a symlink to a file with registry= sends nothing to registry.npmjs.org", async () => {
+      const found = names({ target: "../shared/npmrc", shared: { npmrc: "registry=https://npm.corp.example/\n" } });
+      expect(found).toEqual([]);
+      const { f, urls } = fakeRegistry();
+      await lookupPackages(found, f);
+      expect(urls).toEqual([]);
+    });
+
+    it("a symlink with @scope:registry= keeps that scope private and still checks the rest", () => {
+      expect(names({ target: "../shared/npmrc", shared: { npmrc: "@corp:registry=https://npm.corp.example/\n" } })).toEqual([
+        "internal-billing-sdk",
+        "lodash",
+      ]);
+    });
+
+    it("works for a symlinked .npmrc next to a workspace package.json, and an absolute link", () => {
+      const found = names({
+        target: (outer) => join(outer, "shared", "npmrc"),
+        shared: { npmrc: "@corp:registry=https://npm.corp.example/\n" },
+        pkgAt: "apps/web/package.json",
+        npmrcAt: "apps/web/.npmrc",
+      });
+      expect(found).toEqual(["internal-billing-sdk", "lodash"]);
+    });
+
+    it("a broken symlink, or one to a folder, is ignored without a crash", () => {
+      expect(names({ target: "../shared/missing" })).toEqual(all);
+      expect(names({ target: "../shared/dir", shared: { "dir/registry": "registry=https://npm.corp.example/\n" } })).toEqual(all);
+    });
+
+    it("decoy: a symlinked token-only .npmrc does not stop public lookups", () => {
+      const token = "//registry.npmjs.org/:_authToken=npm_FAKE0000000000000000000000000000fake\n";
+      expect(names({ target: "../shared/npmrc", shared: { npmrc: token } })).toEqual(all);
+    });
+
+    it("the config's ignore still wins over a symlinked .npmrc", () => {
+      const shared = { npmrc: "registry=https://npm.corp.example/\n" };
+      expect(names({ target: "../shared/npmrc", shared, ignore: [".npmrc"] })).toEqual(all);
+    });
+
+    it("is not added to the scanned files, so content rules never see it", () => {
+      const token = `registry=https://npm.corp.example/\n//npm.corp.example/:_authToken=npm_${"aB3dE5gH7jK9mN1pQ3s" + "T5vW7yZ9bC1dE3fG5"}\n`; // fake, split so the source isn't flagged; SW-S01 flags it if the file is scanned
+      const p = linked({ target: "../shared/npmrc", shared: { npmrc: token } });
+      try {
+        const r = scan(p.root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES, { npm: { status: "offline" } });
+        expect(p.files.files).not.toContain(".npmrc");
+        expect(declaredDependencies(p.files)).toEqual([]);
+        expect(r.findings.filter((x) => x.file.includes("npmrc"))).toEqual([]);
+      } finally {
+        p.done();
       }
     });
   });
