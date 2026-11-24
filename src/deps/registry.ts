@@ -8,7 +8,7 @@
  * (including `../lib` paths and `owner/repo` GitHub shorthand), and the project's own
  * workspace packages are never looked up.
  */
-import { lstatSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { ProjectFiles } from "../core/project.js";
 
@@ -91,9 +91,11 @@ export function declaredDependencies(project: ProjectFiles): DeclaredDependency[
 
 /**
  * The project's .npmrc files: those in the scan, plus any next to the root or a package.json
- * that .gitignore hides (often the case, as they can hold an `_authToken`). npm still reads
- * those, so their registry settings count. The extra ones are only read here, never added to
- * the scanned files, and only from folders inside the project that the config doesn't ignore.
+ * that .gitignore hides (often the case, as they can hold an `_authToken`) or that is a
+ * symlink to a regular file (the walker skips every symlink). npm still reads those, so their
+ * registry settings count. The extra ones are only read here, never added to the scanned
+ * files, and only from folders inside the project that the config doesn't ignore. Only the
+ * .npmrc itself may be a link: it is followed, and a broken link or one to a folder is skipped.
  */
 function npmrcFiles(project: ProjectFiles, pkgFiles: string[]): string[] {
   const found = new Set(project.files.filter((f) => posix.basename(f) === ".npmrc"));
@@ -101,7 +103,7 @@ function npmrcFiles(project: ProjectFiles, pkgFiles: string[]): string[] {
     const rel = dir === "." ? ".npmrc" : `${dir}/.npmrc`;
     if (found.has(rel) || project.isExcluded(rel)) continue;
     try {
-      if (lstatSync(join(project.root, rel), { throwIfNoEntry: false })?.isFile()) found.add(rel);
+      if (statSync(join(project.root, rel), { throwIfNoEntry: false })?.isFile()) found.add(rel);
     } catch {
       // unreadable: npm couldn't use it either
     }
