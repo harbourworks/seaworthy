@@ -6,6 +6,7 @@ import { s04LlmKeyInClient } from "./secrets/s04-llm-key-in-client.js";
 import { d01RlsMissing } from "./supabase/d01-rls-missing.js";
 import { d02PolicyAllowsAll } from "./supabase/d02-policy-allows-all.js";
 import { d05RlsBypass } from "./supabase/d05-rls-bypass.js";
+import { d06PolicyTrustsUserMetadata } from "./supabase/d06-policy-trusts-user-metadata.js";
 import { d03FirebaseOpen } from "./firebase/d03-firebase-open.js";
 import { d04StorageOpen } from "./firebase/d04-storage-open.js";
 import { p01WebhookUnverified } from "./payments/p01-webhook-unverified.js";
@@ -24,7 +25,7 @@ import { l03DangerousAgentTool } from "./llm/l03-dangerous-agent-tool.js";
 import { l04McpConfig } from "./llm/l04-mcp-config.js";
 import { l05McpAutoApprove } from "./llm/l05-mcp-auto-approve.js";
 
-export const RULES: Rule[] = [s01CommittedSecrets, s02EnvCommitted, s03SecretInBrowser, s04LlmKeyInClient, d01RlsMissing, d02PolicyAllowsAll, d03FirebaseOpen, d04StorageOpen, d05RlsBypass, p01WebhookUnverified, p02ClientPrice, a01NoAuthCheck, a02NoOwnershipCheck, a03NoRateLimit, a04WildcardCors, a05SqlInjection, l01PromptInjection, l02ModelOutputSink, l03DangerousAgentTool, l04McpConfig, l05McpAutoApprove, x01VulnerableDeps, x02UnknownPackage, b01SecurityHeaders];
+export const RULES: Rule[] = [s01CommittedSecrets, s02EnvCommitted, s03SecretInBrowser, s04LlmKeyInClient, d01RlsMissing, d02PolicyAllowsAll, d03FirebaseOpen, d04StorageOpen, d05RlsBypass, d06PolicyTrustsUserMetadata, p01WebhookUnverified, p02ClientPrice, a01NoAuthCheck, a02NoOwnershipCheck, a03NoRateLimit, a04WildcardCors, a05SqlInjection, l01PromptInjection, l02ModelOutputSink, l03DangerousAgentTool, l04McpConfig, l05McpAutoApprove, x01VulnerableDeps, x02UnknownPackage, b01SecurityHeaders];
 
 export function findRule(id: string): Rule | undefined {
   const want = id.trim().toUpperCase();

@@ -359,6 +359,199 @@ describe("SW-D02 on `supabase db dump` output", () => {
   });
 });
 
+describe("SW-D06 policy that trusts user-editable metadata", () => {
+  const D06 = resolve(__dirname, "../fixtures/rules/sw-d06");
+  const supa = { "package.json": JSON.stringify({ dependencies: { "@supabase/supabase-js": "2.0.0" } }) };
+  const d06 = (r: ReturnType<typeof scan>) => r.findings.filter((f) => f.ruleId === "SW-D06");
+  /** SW-D06 findings at any confidence, as "file:line confidence". */
+  const atAnyConfidence = (root: string) => {
+    const r = scan(root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES);
+    return {
+      all: d06(r).map((f) => `${f.file}:${f.line} ${f.confidence}`),
+      findings: d06(r),
+      suppressed: r.suppressed.filter((f) => f.ruleId === "SW-D06").length,
+    };
+  };
+  /** SW-D06 lines for one migration file (or several), at any confidence. */
+  const run = (sql: string | Record<string, string>) => {
+    const files = typeof sql === "string" ? { "supabase/migrations/1.sql": sql } : sql;
+    const p = project({ ...supa, ...files });
+    const r = atAnyConfidence(p.root);
+    p.done();
+    return r;
+  };
+  const table =
+    "create table invoices (id uuid primary key, user_id uuid references auth.users, amount numeric);\n" +
+    "alter table invoices enable row level security;\n";
+  /** SW-D06 lines when the policy is on line 3 of a migration. */
+  const lines = (policy: string) => run(table + policy).all.map((s) => s.replace("supabase/migrations/1.sql:", ""));
+
+  it("vulnerable fixture: the issue's invoices policy and a raw_user_meta_data subquery, at the create policy lines", () => {
+    const r = atAnyConfidence(join(D06, "vulnerable"));
+    const file = "supabase/migrations/20260101000000_init.sql";
+    expect(r.all).toEqual([`${file}:16 high`, `${file}:19 high`]);
+    const [jwt, raw] = r.findings;
+    expect(jwt!.severity).toBe("high");
+    expect(jwt!.title).toBe('Policy "admins read all" on public.invoices trusts user_metadata, which users can edit');
+    expect(jwt!.why).toContain("auth.jwt() -> 'user_metadata'");
+    expect(jwt!.why).toContain("supabase.auth.updateUser");
+    expect(jwt!.fix).toContain("auth.jwt() -> 'app_metadata'");
+    expect(jwt!.fix).toContain("roles table");
+    expect(jwt!.fixPrompt).toContain(file);
+    expect(jwt!.fixPrompt).toContain('"admins read all"');
+    expect(jwt!.fixPrompt).toContain("public.invoices");
+    expect(jwt!.fixPrompt).toContain("app_metadata");
+    expect(jwt!.fixPrompt).toContain("no client code writes the role");
+    expect(raw!.title).toBe('Policy "staff manage projects" on public.projects trusts user_metadata, which users can edit');
+    expect(raw!.why).toContain("raw_user_meta_data");
+    expect(raw!.fixPrompt).toContain("public.projects");
+  });
+  it("fixed and decoy fixtures: app_metadata, a roles table, owner checks and comments are not flagged", () => {
+    expect(atAnyConfidence(join(D06, "fixed")).all).toEqual([]);
+    expect(atAnyConfidence(join(D06, "decoy")).all).toEqual([]);
+  });
+  it("finds every JSON operator form, with any spacing or casing", () => {
+    const using = (expr: string) => lines(`create policy p on invoices for select using (${expr});`);
+    expect(using("(auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'")).toEqual(["3 high"]);
+    expect(using("auth.jwt()->>'user_metadata' is not null")).toEqual(["3 high"]);
+    expect(using("(auth.jwt() #>> '{user_metadata,role}') = 'admin'")).toEqual(["3 high"]);
+    expect(using("(auth.jwt() #> '{user_metadata, is_admin}')::boolean")).toEqual(["3 high"]);
+    expect(using("(auth.jwt() #>> array['user_metadata', 'role']) = 'admin'")).toEqual(["3 high"]);
+    expect(using("(AUTH.JWT ( ) -> 'user_metadata' ->> 'role') = 'admin'")).toEqual(["3 high"]);
+    expect(using("(auth.jwt()\n    -> 'user_metadata'\n    ->> 'role') = 'admin'")).toEqual(["3 high"]);
+    expect(using("((select auth.jwt()) -> 'user_metadata' ->> 'role') = 'admin'")).toEqual(["3 high"]);
+    expect(using("(( SELECT auth.jwt() AS jwt) -> 'user_metadata' ->> 'role') = 'admin'")).toEqual(["3 high"]);
+    expect(using("jsonb_extract_path_text(auth.jwt(), 'user_metadata', 'role') = 'admin'")).toEqual(["3 high"]);
+  });
+  it("finds the forms `supabase db dump` writes", () => {
+    expect(
+      lines(
+        `CREATE POLICY "admins read all" ON "public"."invoices" FOR SELECT USING (((("auth"."jwt"() -> 'user_metadata'::"text") ->> 'role'::"text") = 'admin'::"text"));`,
+      ),
+    ).toEqual(["3 high"]);
+  });
+  it("finds user_metadata read through current_setting('request.jwt.claims')", () => {
+    const using = (expr: string) => lines(`create policy p on invoices for select using (${expr});`);
+    expect(using("(current_setting('request.jwt.claims', true)::json -> 'user_metadata' ->> 'role') = 'admin'")).toEqual([
+      "3 high",
+    ]);
+    expect(
+      using("((current_setting('request.jwt.claims'::text, true))::jsonb #>> '{user_metadata,role}') = 'admin'"),
+    ).toEqual(["3 high"]);
+    expect(using("(current_setting('request.jwt.claim.user_metadata', true)::json ->> 'role') = 'admin'")).toEqual([
+      "3 high",
+    ]);
+    // Other settings are not the JWT.
+    expect(using("(current_setting('app.settings', true)::json -> 'user_metadata' ->> 'role') = 'admin'")).toEqual([]);
+  });
+  it("finds raw_user_meta_data read from auth.users, quoted or not", () => {
+    const using = (expr: string) => lines(`create policy p on invoices for select using (${expr});`);
+    expect(
+      using("exists (select 1 from auth.users u where u.id = auth.uid() and u.raw_user_meta_data ->> 'role' = 'admin')"),
+    ).toEqual(["3 high"]);
+    expect(
+      using(`(select "raw_user_meta_data" ->> 'role' from "auth"."users" where id = auth.uid()) = 'admin'`),
+    ).toEqual(["3 high"]);
+    expect(
+      using(
+        `EXISTS ( SELECT 1 FROM "auth"."users" WHERE (("users"."id" = "auth"."uid"()) AND (("users"."raw_user_meta_data" ->> 'role'::"text") = 'admin'::"text")))`,
+      ),
+    ).toEqual(["3 high"]);
+    expect(using("exists (select 1 from auth.users u where u.id = auth.uid() and u.raw_app_meta_data ->> 'role' = 'admin')")).toEqual([]);
+    // A column with that name on some other table is not Supabase's user metadata.
+    expect(
+      using("exists (select 1 from public.profiles p where p.id = auth.uid() and p.raw_user_meta_data ->> 'role' = 'admin')"),
+    ).toEqual([]);
+  });
+  it("checks WITH CHECK too, and reports one finding per policy", () => {
+    expect(
+      lines(
+        "create policy p on invoices for insert\n  with check ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin');",
+      ),
+    ).toEqual(["3 high"]);
+    expect(
+      lines(
+        "create policy p on invoices for update\n" +
+          "  using ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin')\n" +
+          "  with check ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin');",
+      ),
+    ).toEqual(["3 high"]);
+  });
+  it("follows alter policy: reported at the create policy line, and cleared when the policy is fixed", () => {
+    const create = "create policy p on invoices for select using ((select auth.uid()) = user_id);";
+    const bad = "create policy p on invoices for select using ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin');";
+    const r = run({
+      "supabase/migrations/1.sql": table + create,
+      "supabase/migrations/2.sql": "alter policy p on invoices using ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin');",
+    });
+    expect(r.all).toEqual(["supabase/migrations/1.sql:3 high"]);
+    expect(r.findings[0]!.why).toContain("supabase/migrations/2.sql:1");
+    expect(
+      run({
+        "supabase/migrations/1.sql": table + bad,
+        "supabase/migrations/2.sql": "alter policy p on invoices using ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');",
+      }).all,
+    ).toEqual([]);
+    expect(
+      run({ "supabase/migrations/1.sql": table + bad, "supabase/migrations/2.sql": "drop policy p on invoices;" }).all,
+    ).toEqual([]);
+  });
+  it("points at the create policy inside a DO block, and at the execute line of a DO block loop", () => {
+    expect(
+      lines(
+        "do $$ begin\n  create policy p on invoices for select using ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin');\nend $$;",
+      ),
+    ).toEqual(["4 high"]);
+    const loop = [
+      "do $$",
+      "declare tbl text;",
+      "begin",
+      "  foreach tbl in array array['invoices']",
+      "  loop",
+      `    execute format('create policy "admins read %1$s" on public.%1$I for select using ((auth.jwt() -> ''user_metadata'' ->> ''role'') = ''admin'')', tbl);`,
+      "  end loop;",
+      "end",
+      "$$;",
+    ].join("\n");
+    const r = run(table + loop);
+    expect(r.all).toEqual(["supabase/migrations/1.sql:8 high"]);
+    expect(r.findings[0]!.title).toBe('Policy "admins read invoices" on public.invoices trusts user_metadata, which users can edit');
+  });
+  it("honours a seaworthy-ignore comment with a reason on the line before create policy", () => {
+    const r = run(
+      table +
+        "-- seaworthy-ignore SW-D06 display name only, no access decision\n" +
+        "create policy p on invoices for select using (auth.jwt() -> 'user_metadata' ->> 'theme' is not null);",
+    );
+    expect(r.all).toEqual([]);
+    expect(r.suppressed).toBe(1);
+  });
+  it("decoys: owner checks, app_metadata, comments, strings and policy names are not flagged", () => {
+    const using = (expr: string) => lines(`create policy p on invoices for select using (${expr});`);
+    expect(using("auth.uid() = user_id")).toEqual([]);
+    expect(using("(auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'")).toEqual([]);
+    expect(using("(auth.jwt() #>> '{app_metadata,role}') = 'admin'")).toEqual([]);
+    expect(using("auth.uid() = user_id /* not auth.jwt() -> 'user_metadata' */")).toEqual([]);
+    expect(using("auth.uid() = user_id -- not auth.jwt() -> 'user_metadata'\n")).toEqual([]);
+    expect(using("auth.uid() = user_id and amount::text <> 'user_metadata'")).toEqual([]);
+    expect(using("(auth.jwt() ->> 'email') = 'user_metadata@example.com'")).toEqual([]);
+    expect(using("(auth.jwt() ->> 'user_metadata_version') = '2'")).toEqual([]);
+    expect(using("(settings -> 'user_metadata' ->> 'role') = 'admin'")).toEqual([]);
+    expect(using("(auth.jwt() -> 'app_metadata' -> 'user_metadata') is not null")).toEqual([]);
+    expect(lines(`create policy "user_metadata admins" on invoices for select using (auth.uid() = user_id);`)).toEqual([]);
+    expect(lines("-- create policy p on invoices using (auth.jwt() -> 'user_metadata' ->> 'role' = 'admin');\nselect 1;")).toEqual(
+      [],
+    );
+  });
+  it("skips policies the Data API's users can't reach, and tables left to SW-D01", () => {
+    const bad = "(auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'";
+    expect(lines(`create policy p on invoices for select to service_role using (${bad});`)).toEqual([]);
+    expect(run(`create table t (id int);\ncreate policy p on t for select using (${bad});`).all).toEqual([]);
+    // A restrictive policy is still bypassed: the attacker sets whatever value it checks.
+    expect(lines(`create policy p on invoices as restrictive for select to authenticated using (${bad});`)).toEqual(["3 high"]);
+  });
+});
+
 describe("SW-D05 view or security definer function that bypasses RLS", () => {
   const D05 = resolve(__dirname, "../fixtures/rules/sw-d05");
   const d05 = (r: ReturnType<typeof scan>) => r.findings.filter((f) => f.ruleId === "SW-D05");
