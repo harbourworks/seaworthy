@@ -25,6 +25,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 | [SW-A03](#sw-a03) | Costly or sensitive endpoint with no rate limit | medium | Next.js |
 | [SW-A04](#sw-a04) | CORS lets any site make credentialed requests | medium | Any project |
 | [SW-A05](#sw-a05) | SQL built from user input | high | Any project |
+| [SW-A06](#sw-a06) | Server-side auth decision trusts an unverified Supabase session | high | Supabase |
 | [SW-L01](#sw-l01) | User input in the system prompt | high | Any project |
 | [SW-L02](#sw-l02) | Model output rendered as HTML or run as code | high | Any project |
 | [SW-L03](#sw-l03) | Agent tool with shell, file or code access and no guard | high | Any project |
@@ -169,6 +170,14 @@ CORS decides which other websites can call your API from a visitor's browser. Al
 Gluing user input into a SQL string lets an attacker rewrite the query: a search box that receives `' OR '1'='1` returns every row, and worse inputs can change or delete data. Pass values as parameters instead, so the database never treats them as SQL.
 
 **Checks:** SQL strings built from request input and passed to query methods.
+
+## SW-A06
+
+**Server-side auth decision trusts an unverified Supabase session** · high · runs on: Supabase
+
+On the server, `supabase.auth.getSession()` reads the session from the request's cookies without verifying it, so its contents may not be authentic. Supabase's docs say never to trust it in server code, and to protect pages and data with `getClaims()`, which verifies the token's signature, or `getUser()`, which asks Supabase Auth. A route, page, server action or middleware that lets people in because `getSession()` returned a session, or takes the user ID for a query from it, can be fooled by a made-up or tampered cookie. The `getSession()` version is the shortest guard to write, and many older tutorials use it.
+
+**Checks:** Calls to `<client>.auth.getSession()` in Next.js server code: App Router route handlers, Pages Router API routes, files that start with `"use server"`, `page`, `layout`, `template`, `default` and `not-found` files under `app/`, and `middleware` or `proxy` at the project root or in `src/`. Files marked `"use client"` and test files are skipped. A call is reported when its result (or a variable it is destructured or copied into) is tested by an `if`, `?:`, `&&` or `||` that returns, throws or calls `redirect`, `permanentRedirect`, `notFound`, `unauthorized` or `forbidden`, or when its `user.id` is passed to a query method (such as `.eq`, `.match`, `.insert`, `.update`, `.delete`, `.where` or Prisma's `findMany`). It isn't reported when the same function calls `auth.getUser()` or `auth.getClaims()`, itself or through a helper defined in the file or imported from a local file; in middleware, anywhere in the file counts. Helpers in other files that call `getSession()` aren't read, and nor is `getServerSideProps`.
 
 ## SW-L01
 

@@ -1885,6 +1885,152 @@ describe("SW-A02 record fetched by ID with no ownership check", () => {
   });
 });
 
+describe("SW-A06 server-side auth decision trusts an unverified Supabase session", () => {
+  const A06 = resolve(__dirname, "../fixtures/rules/sw-a06");
+  const deps = { "package.json": JSON.stringify({ dependencies: { next: "15.0.0", "@supabase/ssr": "0.5.2" } }) };
+  const findings = (root: string) => scan(root, { ...DEFAULT_CONFIG, minConfidence: "low" }, RULES).findings;
+  const run = (files: Record<string, string>) => {
+    const p = project({ ...deps, ...files });
+    const all = findings(p.root);
+    p.done();
+    const mine = all.filter((f) => f.ruleId === "SW-A06");
+    return {
+      all: mine.map((f) => `${f.file}:${f.line}`).sort(),
+      titles: mine.map((f) => f.title).sort(),
+      a01: all.filter((f) => f.ruleId === "SW-A01").length,
+    };
+  };
+  const session = "  const { data: { session } } = await supabase.auth.getSession();\n";
+  const route = (body: string, method = "GET") => `export async function ${method}(req: Request) {\n${body}}\n`;
+
+  it("vulnerable fixture: the issue's invoices route, middleware, a page and a server action", () => {
+    const f = findings(join(A06, "vulnerable")).filter((x) => x.ruleId === "SW-A06");
+    expect(f.map((x) => `${x.file}:${x.line}:${x.column} ${x.severity}/${x.confidence}`).sort()).toEqual([
+      "src/app/api/invoices/route.ts:5:39 high/medium",
+      "src/app/dashboard/page.tsx:8:13 high/medium",
+      "src/app/notes/actions.ts:6:26 high/medium",
+      "src/middleware.ts:13:26 high/medium",
+    ]);
+    const inv = f.find((x) => x.file === "src/app/api/invoices/route.ts")!;
+    expect(inv.title).toBe("GET /api/invoices trusts an unverified Supabase session for sign-in and the user ID");
+    expect(inv.why).toContain("reads the session from the request's cookies without verifying it");
+    expect(inv.why).toContain(
+      "This code uses that session to decide whether the caller is signed in, and passes its user ID (`session.user.id`) to a query as the owner. " +
+        "Nothing in this function calls `auth.getUser()` or `auth.getClaims()`. A made-up or tampered session cookie can get past this check and choose that user ID.",
+    );
+    expect(f.find((x) => x.file === "src/app/notes/actions.ts")!.why).toContain("passes the user ID from that session (`userId`) to a query as the owner");
+    expect(inv.fix).toContain("supabase.auth.getClaims()");
+    expect(inv.fix).toContain("supabase.auth.getUser()");
+    expect(inv.fixPrompt).toContain("In src/app/api/invoices/route.ts, the GET handler");
+    expect(f.find((x) => x.file === "src/middleware.ts")!.title).toBe("Middleware trusts an unverified Supabase session for sign-in");
+    expect(f.find((x) => x.file === "src/app/dashboard/page.tsx")!.title).toBe("Page /dashboard trusts an unverified Supabase session for sign-in");
+    expect(f.find((x) => x.file === "src/app/notes/actions.ts")!.title).toBe("Server action addNote trusts an unverified Supabase session for the user ID");
+  });
+  it("fixed fixture: getUser() and getClaims()", () => {
+    expect(findings(join(A06, "fixed")).filter((x) => x.ruleId === "SW-A06")).toEqual([]);
+  });
+  it("decoy fixture: a client component, the access token after getUser(), and an imported getUser() helper", () => {
+    expect(findings(join(A06, "decoy")).filter((x) => x.ruleId === "SW-A06")).toEqual([]);
+  });
+
+  it("guard forms: return 401, throw, redirect, notFound, NextResponse.redirect, a ternary and &&", () => {
+    const r = run({
+      "app/api/a/route.ts": route(session + "  if (!session) return new Response(null, { status: 401 });\n  return Response.json({});\n"),
+      "app/api/b/route.ts": route(session + "  if (session === null) { throw new Error('no'); }\n  return Response.json({});\n"),
+      "app/api/c/route.ts": route(session + "  if (!session?.user) redirect('/login');\n  return Response.json({});\n"),
+      "app/api/d/route.ts": route(session + "  if (!session) notFound();\n  return Response.json({});\n"),
+      "app/e/page.tsx": "export default async function Page() {\n" + session + "  return session ? <main /> : redirect('/login');\n}\n",
+      "app/f/layout.tsx": "export default async function Layout({ children }) {\n" + session + "  !session && redirect('/login');\n  return children;\n}\n",
+      "proxy.ts": "export async function proxy(req) {\n  const res = await supabase.auth.getSession();\n  if (!res.data.session) return NextResponse.redirect(new URL('/login', req.url));\n}\n",
+      "app/api/g/route.ts": route("  const s = await supabase.auth.getSession().then((r) => r.data.session);\n  if (!s) return new Response(null, { status: 401 });\n"),
+    });
+    expect(r.all).toEqual([
+      "app/api/a/route.ts:2", "app/api/b/route.ts:2", "app/api/c/route.ts:2", "app/api/d/route.ts:2",
+      "app/api/g/route.ts:2", "app/e/page.tsx:2", "app/f/layout.tsx:2", "proxy.ts:2",
+    ]);
+    expect(r.titles).toContain("Proxy trusts an unverified Supabase session for sign-in");
+  });
+  it("owner-in-query forms, with no guard: .eq(), insert values, Prisma where, an alias, renamed destructuring", () => {
+    const r = run({
+      "app/api/a/route.ts": route(session + "  return Response.json(await supabase.from('notes').select().eq('user_id', session?.user.id));\n"),
+      "app/api/b/route.ts": route("  const { data } = await supabase.auth.getSession();\n  await supabase.from('notes').insert({ user_id: data.session!.user.id });\n", "POST"),
+      "app/api/c/route.ts": route(session + "  const uid = session?.user?.id;\n  return Response.json(await prisma.note.findMany({ where: { userId: uid } }));\n"),
+      "app/api/d/route.ts": route("  const { data: { session: s } } = await supabase.auth.getSession();\n  const { user } = s!;\n  await supabase.from('notes').delete().match({ owner: user.id });\n", "DELETE"),
+    });
+    expect(r.all).toEqual(["app/api/a/route.ts:2", "app/api/b/route.ts:2", "app/api/c/route.ts:2", "app/api/d/route.ts:2"]);
+    expect(r.titles).toContain("GET /api/a trusts an unverified Supabase session for the user ID");
+  });
+  it("server actions and pages/api handlers", () => {
+    const r = run({
+      "app/actions.ts": "'use server';\nexport async function save() {\n" + session + "  if (!session) return { error: 'Sign in' };\n}\n" +
+        "export const remove = async (id: string) => {\n" + session + "  if (!session) throw new Error('no');\n};\n",
+      "pages/api/notes.ts": "export default async function handler(req, res) {\n" + session + "  if (!session) return res.status(401).end();\n}\n",
+    });
+    expect(r.all).toEqual(["app/actions.ts:3", "app/actions.ts:7", "pages/api/notes.ts:2"]);
+    expect(r.titles).toContain("Server action remove trusts an unverified Supabase session for sign-in");
+    expect(r.titles).toContain("Handler /api/notes trusts an unverified Supabase session for sign-in");
+  });
+  it("leaves \"use client\" files alone, even route-shaped ones", () => {
+    expect(
+      run({
+        "app/profile/page.tsx": "'use client';\nexport default function Page() {\n  useEffect(() => { (async () => {\n" + session +
+          "  if (!session) router.push('/login');\n  })(); }, []);\n}\n",
+        "app/settings/page.tsx": "\"use client\"\nexport default async function Page() {\n" + session + "  if (!session) redirect('/login');\n}\n",
+      }).all,
+    ).toEqual([]);
+  });
+  it("getUser() or getClaims() in the same function, a local helper or an imported one", () => {
+    const guard = "  if (!session) return new Response(null, { status: 401 });\n";
+    expect(
+      run({
+        "app/api/a/route.ts": route("  const { data: { user } } = await supabase.auth.getUser();\n  if (!user) return;\n" + session + guard),
+        "app/api/b/route.ts": route("  const { data } = await supabase.auth.getClaims();\n  if (!data?.claims) return;\n" + session + guard),
+        "app/api/c/route.ts": "async function me() { return (await supabase.auth.getUser()).data.user; }\n" + route("  if (!(await me())) return;\n" + session + guard),
+        "lib/guard.ts": "export async function requireUser() {\n  const { data } = await createClient().auth.getClaims();\n  if (!data) redirect('/login');\n}\n",
+        "app/api/d/route.ts": "import { requireUser } from '@/lib/guard';\n" + route("  await requireUser();\n" + session + guard),
+        "middleware.ts": "export async function middleware(req) {\n  const { data: { session } } = await supabase.auth.getSession();\n" +
+          "  if (!session) return NextResponse.redirect('/login');\n}\nasync function refresh() { await supabase.auth.getUser(); }\n",
+      }).all,
+    ).toEqual([]);
+  });
+  it("a sibling handler's getUser() doesn't cover this one", () => {
+    const r = run({
+      "app/api/notes/route.ts":
+        route("  const { data: { user } } = await supabase.auth.getUser();\n  if (!user) return;\n") +
+        route(session + "  if (!session) return new Response(null, { status: 401 });\n", "POST"),
+    });
+    expect(r.all).toEqual(["app/api/notes/route.ts:6"]);
+  });
+  it("getSession() that decides nothing: the token only, an error check, a log", () => {
+    expect(
+      run({
+        "app/api/a/route.ts": route(session + "  return fetch(url, { headers: { Authorization: `Bearer ${session?.access_token}` } });\n"),
+        "app/api/b/route.ts": route("  const { data, error } = await supabase.auth.getSession();\n  if (error) throw error;\n  return Response.json({ ok: true });\n"),
+        "app/api/c/route.ts": route(session + "  if (session) console.log('signed in', session.user.id);\n  return Response.json({});\n"),
+      }).all,
+    ).toEqual([]);
+  });
+  it("only server files: a shared lib file, a plain component and a test aren't read", () => {
+    const fn = "export async function f() {\n" + session + "  if (!session) redirect('/login');\n}\n";
+    expect(run({ "lib/session.ts": fn, "components/nav.tsx": fn, "app/api/a/route.test.ts": fn }).all).toEqual([]);
+  });
+  it("needs Supabase's auth.getSession(), not other libraries' getSession()", () => {
+    expect(
+      run({
+        "app/api/a/route.ts": route("  const session = await getSession();\n  if (!session) return new Response(null, { status: 401 });\n"),
+        "app/api/b/route.ts": route("  const session = await auth.api.getSession({ headers: req.headers });\n  if (!session) return new Response(null, { status: 401 });\n"),
+      }).all,
+    ).toEqual([]);
+  });
+  it("SW-A01 still counts getSession() as a check, so the route is reported once, by SW-A06", () => {
+    const r = run({
+      "app/api/notes/route.ts": route(session + "  if (!session) return new Response(null, { status: 401 });\n  await supabase.from('notes').delete().eq('user_id', session.user.id);\n", "DELETE"),
+    });
+    expect(r.all).toEqual(["app/api/notes/route.ts:2"]);
+    expect(r.a01).toBe(0);
+  });
+});
+
 describe("SW-P02 price or amount taken from the client", () => {
   const stripeDeps = { "package.json": JSON.stringify({ dependencies: { stripe: "14.0.0" } }) };
   const run = (files: Record<string, string>) => {
