@@ -61,7 +61,7 @@ Node 20 or later. No install needed; `npm i -D seaworthy-cli` pins a version if 
 ```json
 {
   "tool": "seaworthy",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "failed": true,
   "stack": ["nextjs", "react", "supabase", "stripe"],
   "filesScanned": 16,
