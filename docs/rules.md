@@ -17,6 +17,7 @@ Every rule Seaworthy runs, with what it reads and where it stops. A rule only ru
 | [SW-D03](#sw-d03) | Firebase database rules open to everyone | critical | Firebase |
 | [SW-D04](#sw-d04) | Storage open to everyone | high | Firebase, Supabase |
 | [SW-D05](#sw-d05) | View or SECURITY DEFINER function bypasses row-level security | high | Supabase |
+| [SW-D06](#sw-d06) | Row-level security policy trusts user-editable metadata | high | Supabase |
 | [SW-P01](#sw-p01) | Stripe webhook does not verify the signature | critical | Stripe |
 | [SW-P02](#sw-p02) | Price or amount taken from the client | high | Stripe |
 | [SW-A01](#sw-a01) | API route with no auth check | high | Next.js |
@@ -104,6 +105,14 @@ Storage rules decide who can upload, download and delete files. With no conditio
 A Postgres view runs with its owner's rights unless it is created with `security_invoker = true`, so row-level security on the tables it reads doesn't apply to callers. A view in the public schema is served by the Data API like a table, so anyone with your anon key can read every row through it. A `security definer` function also runs as its owner and skips RLS, and anyone with the anon key can call it at `/rest/v1/rpc/<name>`. Without `set search_path`, the names it uses are looked up on the caller's search path.
 
 **Checks:** Views and functions in the public schema of Supabase SQL migrations, replayed in order. A view without `security_invoker = true` (in `with (...)` or a later `alter view ... set`) that reads from a table with RLS enabled is high; views over tables without RLS are left to SW-D01, and dropped views or views with access revoked from anon and authenticated aren't flagged. A `security definer` function with no `set search_path`, that isn't a trigger function and whose EXECUTE isn't revoked from public, anon and authenticated, is reported at medium confidence. Functions are matched by name, not by argument types. Materialized views aren't checked.
+
+## SW-D06
+
+**Row-level security policy trusts user-editable metadata** · high · runs on: Supabase
+
+Every signed-in user can change their own `user_metadata` from the browser with `supabase.auth.updateUser({ data: { ... } })`, and Supabase copies it into their JWT. A policy that reads a role, an admin flag, a plan or a team ID from `auth.jwt() -> 'user_metadata'` (or from `raw_user_meta_data` in `auth.users`) can be passed by anyone who signs up and sets that value on themselves. Read the role from `app_metadata`, which only server code with the service role can set, or from a roles table that users can't write to.
+
+**Checks:** Policies in Supabase SQL migrations or `supabase db dump` output, replayed in order (including `alter policy` and policies created by a `do` block loop SW-D01 can read), whose `using` or `with check` reads `user_metadata` from the caller's JWT: `auth.jwt()` or `(select auth.jwt())` followed by `->`, `->>`, `#>` or `#>>` with `user_metadata` as the first key, `json(b)_extract_path(_text)(auth.jwt(), 'user_metadata', ...)`, the same on `current_setting('request.jwt.claims', ...)`, or `current_setting('request.jwt.claim.user_metadata')`. A policy that reads `raw_user_meta_data` in a subquery on `auth.users` is flagged too. One finding per policy, at its `create policy` line. Policies only for `service_role` or a custom role, and tables without RLS (SW-D01's finding), aren't flagged. Functions a policy calls (such as an `is_admin()` helper) aren't read, and nor are policies on `storage.objects`.
 
 ## SW-P01
 

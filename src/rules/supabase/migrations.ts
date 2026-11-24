@@ -45,6 +45,8 @@ export interface PolicyClause {
   /** File offset of the expression's first character. */
   offset: number;
   file: string;
+  /** Set when a later ALTER POLICY replaced the clause the CREATE POLICY wrote. */
+  altered?: boolean;
 }
 
 export interface Policy {
@@ -56,6 +58,7 @@ export interface Policy {
   using?: PolicyClause;
   check?: PolicyClause;
   file: string;
+  /** Offset of the `create policy` keyword (or the DO block `execute` that ran it). */
   offset: number;
 }
 
@@ -604,7 +607,7 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
         using: parts.using,
         check: parts.check,
         file,
-        offset: at(stmt.offset),
+        offset: at(tokenOffset(stmt)),
       });
       return;
     }
@@ -620,8 +623,8 @@ export function replayMigrations(project: ProjectFiles): MigrationState {
       }
       const parts = policyParts(stmt, file, pin);
       if (parts.roles) pol.roles = parts.roles;
-      if (parts.using) pol.using = parts.using;
-      if (parts.check) pol.check = parts.check;
+      if (parts.using) pol.using = { ...parts.using, altered: true };
+      if (parts.check) pol.check = { ...parts.check, altered: true };
       return;
     }
     if ((m = DROP_POLICY.exec(t))) {
