@@ -2,6 +2,17 @@
 
 All notable changes to seaworthy-cli. Versions follow [semantic versioning](https://semver.org); while it's 0.x, a minor version can change behaviour.
 
+## 0.7.3 (24 November 2026)
+
+Fewer false alarms from SW-D01, SW-P01, SW-S01 and SW-A02, and SW-D02 now checks policies created in loops.
+
+- **SW-D01 and SW-D02 with DO blocks:** in Supabase migrations, a `do $$ … $$` block that loops over a written-out list of tables (`foreach t in array array['orders', 'notes'] loop`) and runs `execute format(…, t)` is now read table by table. Tables it enables row-level security on are no longer reported by SW-D01, and the policies it creates are checked by SW-D02, reported at the `execute` line, one finding per table. When a block that mentions row level security uses other dynamic SQL Seaworthy can't follow, its tables are reported by SW-D01 as "may not have row-level security" at low confidence (shown with `--min-confidence low`) instead of high.
+- **Findings at the same spot:** two findings from one rule at the same file, line and column are now both shown when their titles differ. Before, only the first was kept.
+- **SW-P01 and split webhook handlers:** a file that handles Stripe events but doesn't read the request body is no longer reported when a file that imports it verifies the signature (one level of importers, including `@/` and `~/` imports). When it is still reported, it is at medium confidence, so it's hidden by default (shown with `--min-confidence medium`), and the message no longer says the file reads the request body. A file named like a webhook no longer raises the confidence. Webhooks that read the body themselves are reported as before.
+- **SW-S01 and example database URLs:** connection strings at reserved example hosts (`example.com`, `example.org`, `example.net` and their subdomains, and hosts ending in `.example`, `.test`, `.invalid` or `.localhost`) are no longer reported, nor are ones whose password is exactly `password`, `pass`, `secret`, `postgres`, `root`, `admin` or `changeme` (any case), whatever the host.
+- **SW-A02 and admin actions:** IDs that come from an awaited `auth.admin.createUser`, `auth.admin.inviteUserByEmail` or `.insert(…).select()` are no longer treated as request input. A query is no longer reported when the handler first runs an awaited role guard (`requireRole`, `requireAdmin`, `requirePermission` or their plurals, `assertRole`, `assertAdmin`, `assertPermission`, `ensureAdmin`), or an `if` on `!isAdmin(…)`, `!hasRole(…)`, `!can(…)` or `role !== "admin"`/`"owner"`/`"manager"` that throws, returns, or calls a Next.js exit such as `redirect` or `notFound`.
+- **SW-X02 and a linked `.npmrc`:** a project `.npmrc` that is a symlink to a file is now read for its registry settings, so packages from your private registry are no longer looked up on npm. A broken link or a link to a folder is skipped.
+
 ## 0.7.2 (20 November 2026)
 
 Fewer false alarms from SW-S04 and SW-X02, and fewer package names sent to npm.
