@@ -46,6 +46,15 @@ export const COVERAGE: Record<string, string> = {
   "SW-A03": "Next.js handlers and server actions that call paid AI models, send email or SMS, or check passwords, with no rate limiter in the handler, a local helper or middleware.",
   "SW-A04": "Wildcard or echoed origins combined with credentials, in code (`cors()`, response headers) and in nginx config.",
   "SW-A05": "SQL strings built from request input and passed to query methods.",
+  "SW-A06":
+    "Calls to `<client>.auth.getSession()` in Next.js server code: App Router route handlers, Pages Router API routes, files that start with `\"use server\"`, " +
+    "`page`, `layout`, `template`, `default` and `not-found` files under `app/`, and `middleware` or `proxy` at the project root or in `src/`. Files marked `\"use client\"` and test files are skipped. " +
+    "A call is reported when its result (or a variable it is destructured or copied into) is tested by an `if`, `?:`, `&&` or `||` that returns, throws or calls `redirect`, `permanentRedirect`, `notFound`, `unauthorized` or `forbidden`. " +
+    "An exit taken only when a session is present (such as `if (session) redirect(\"/dashboard\")` on a login page) isn't counted when all it does is redirect, " +
+    "with `redirect`, `permanentRedirect` or a returned `.redirect(...)` call such as `NextResponse.redirect`. A call is also reported " +
+    "when its `user.id` is passed to a query method (such as `.eq`, `.match`, `.insert`, `.update`, `.delete`, `.where` or Prisma's `findMany`). " +
+    "It isn't reported when the same function calls `auth.getUser()` or `auth.getClaims()`, itself or through a helper defined in the file or imported from a local file; in middleware, anywhere in the file counts. " +
+    "Helpers in other files that call `getSession()` aren't read, and nor is `getServerSideProps`.",
   "SW-L01": "System prompts or instructions built from user input, in calls to model SDKs.",
   "SW-L02": "Model output rendered as HTML, passed to `eval` or `Function`, or run as SQL.",
   "SW-L03": "Agent tools whose model-chosen arguments reach shell commands, file deletes or writes, or `eval`, with no allow-list or confirmation step.",
