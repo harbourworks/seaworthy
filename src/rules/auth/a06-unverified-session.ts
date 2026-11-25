@@ -213,7 +213,8 @@ function pagePath(file: string): string {
 
 /**
  * How the result of a getSession() call is used in its function: as a guard (an `if`, `?:`, `&&` or `||` on it
- * that returns, throws or redirects), or as the owner ID in a query (`<session>.user.id` passed to a query
+ * that returns, throws or redirects, unless that exit is only a redirect taken when a session is present, as when a
+ * login page sends signed-in users on), or as the owner ID in a query (`<session>.user.id` passed to a query
  * method). Follows the variables it is destructured or copied into.
  */
 function howUsed(text: string, call: Node, fn: Node, parents: Map<Node, Node | null>): { guard: boolean; owner: string | null } {
@@ -316,10 +317,40 @@ function howUsed(text: string, call: Node, fn: Node, parents: Map<Node, Node | n
     return hit;
   };
 
+  /** Whether a tracked value is known to be there ("present") or missing ("absent") when `test` is `outcome`. */
+  const side = (test: Node, outcome: boolean): "present" | "absent" | null => {
+    let t: Node = test;
+    while (t.type === "TSNonNullExpression" || t.type === "ParenthesizedExpression") t = t.expression;
+    if (t.type === "UnaryExpression" && t.operator === "!") return side(t.argument, !outcome);
+    if (t.type === "LogicalExpression" && t.operator !== "??") {
+      // `a && b` is true only when both are; `a || b` is false only when both are. Otherwise either side could decide.
+      if ((t.operator === "&&") === outcome) return side(t.left, outcome) ?? side(t.right, outcome);
+      const l = side(t.left, outcome);
+      return l !== null && l === side(t.right, outcome) ? l : null;
+    }
+    if (t.type === "BinaryExpression" && ["==", "===", "!=", "!=="].includes(t.operator)) {
+      const empty = (x: Node) => x.type === "NullLiteral" || (x.type === "Identifier" && x.name === "undefined");
+      const other = empty(t.right) ? t.left : empty(t.left) ? t.right : null;
+      if (!other || other.type === "PrivateName") return null;
+      if (side(other, true) === null) return null; // not a tracked value
+      // `session === null` is true when there's no session; `session !== null` when there is one.
+      const equal = t.operator === "==" || t.operator === "===";
+      return equal === outcome ? "absent" : "present";
+    }
+    const root = rootIdentifier(t);
+    const r = root ? resolve(root) : null;
+    return r && r.top === t ? (outcome ? "present" : "absent") : null;
+  };
+  /** An exit on the signed-in side that only redirects, such as sending a signed-in user away from /login: no guard. */
+  const signedInRedirect = (branch: Node | null | undefined, when: "present" | "absent" | null): boolean =>
+    when === "present" && !!branch && redirectsOnly(branch);
+  const guards = (branch: Node | null | undefined, when: "present" | "absent" | null): boolean =>
+    exits(branch) && !signedInRedirect(branch, when);
+
   walkAst(fn, (n) => {
-    if (n.type === "IfStatement" && mentions(n.test) && (exits(n.consequent) || exits(n.alternate))) guard = true;
-    if (n.type === "ConditionalExpression" && mentions(n.test) && (exits(n.consequent) || exits(n.alternate))) guard = true;
-    if (n.type === "LogicalExpression" && mentions(n.left) && exits(n.right)) guard = true;
+    if ((n.type === "IfStatement" || n.type === "ConditionalExpression") && mentions(n.test) &&
+        (guards(n.consequent, side(n.test, true)) || guards(n.alternate, side(n.test, false)))) guard = true;
+    if (n.type === "LogicalExpression" && mentions(n.left) && guards(n.right, side(n.left, n.operator === "&&"))) guard = true;
     if (!owner && n.type === "Identifier") {
       const r = resolve(n);
       if (r && r.path.slice(-2).join(".") === "user.id" && inQuery(r.top, parents)) {
@@ -328,6 +359,36 @@ function howUsed(text: string, call: Node, fn: Node, parents: Map<Node, Node | n
     }
   });
   return { guard, owner };
+}
+
+/** Whether every way a branch exits is a redirect: `redirect(...)`, `permanentRedirect(...)` or a returned `NextResponse.redirect(...)`. */
+function redirectsOnly(branch: Node): boolean {
+  let ok = true;
+  let any = false;
+  const isRedirect = (x: Node | null | undefined): boolean => {
+    while (x && (x.type === "AwaitExpression" || x.type === "TSNonNullExpression" || x.type === "ParenthesizedExpression")) x = x.type === "AwaitExpression" ? x.argument : x.expression;
+    if (!x || x.type !== "CallExpression") return false;
+    const c = x.callee;
+    const name = c.type === "Identifier" ? c.name : (c.type === "MemberExpression" && c.property.type === "Identifier") ? c.property.name : null;
+    return name === "redirect" || name === "permanentRedirect";
+  };
+  walkAst(branch, (x) => {
+    if (!ok || (x !== branch && isFunction(x))) return false;
+    if (x.type === "ThrowStatement") ok = false;
+    if (x.type === "ReturnStatement") {
+      any = true;
+      if (!isRedirect(x.argument)) ok = false;
+    }
+    if (x.type === "CallExpression") {
+      const c = x.callee;
+      const name = c.type === "Identifier" ? c.name : (c.type === "MemberExpression" && c.property.type === "Identifier") ? c.property.name : null;
+      if (name && EXIT_CALL_RE.test(name)) {
+        any = true;
+        if (!isRedirect(x)) ok = false;
+      }
+    }
+  });
+  return ok && any;
 }
 
 /** For `.then((r) => r.data.session)`: the path the callback reads from its argument, here ["data", "session"]. */

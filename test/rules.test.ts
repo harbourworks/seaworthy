@@ -2022,6 +2022,40 @@ describe("SW-A06 server-side auth decision trusts an unverified Supabase session
       }).all,
     ).toEqual([]);
   });
+  it("a redirect taken only when a session is present isn't a guard: a login page and login-only middleware", () => {
+    expect(
+      run({
+        "src/app/login/page.tsx":
+          "export default async function Page() {\n" + session + "  if (session) redirect('/dashboard');\n  return <LoginForm />;\n}\n",
+        "app/signup/page.tsx":
+          "export default async function Page() {\n" + session + "  session && redirect('/dashboard');\n  return <SignupForm />;\n}\n",
+        "app/welcome/page.tsx":
+          "export default async function Page() {\n" + session + "  return session ? redirect('/dashboard') : <Welcome />;\n}\n",
+        "app/register/page.tsx":
+          "export default async function Page() {\n" + session + "  if (session !== null) { return redirect('/dashboard'); }\n  return <Form />;\n}\n",
+        "src/middleware.ts":
+          "export async function middleware(request: NextRequest) {\n" + session +
+          "  if (session && request.nextUrl.pathname === '/login') {\n" +
+          "    return NextResponse.redirect(new URL('/dashboard', request.url));\n  }\n  return NextResponse.next();\n}\n",
+      }).all,
+    ).toEqual([]);
+  });
+  it("exits on the signed-out side still count, alongside a signed-in redirect", () => {
+    const r = run({
+      "src/middleware.ts":
+        "export async function middleware(request: NextRequest) {\n" + session +
+        "  if (session && request.nextUrl.pathname === '/login') {\n" +
+        "    return NextResponse.redirect(new URL('/dashboard', request.url));\n  }\n" +
+        "  if (!session && request.nextUrl.pathname.startsWith('/dashboard')) {\n" +
+        "    return NextResponse.redirect(new URL('/login', request.url));\n  }\n  return NextResponse.next();\n}\n",
+      "app/a/page.tsx": "export default async function Page() {\n" + session + "  if (session) redirect('/dashboard');\n  else redirect('/login');\n}\n",
+      "app/b/page.tsx": "export default async function Page() {\n" + session + "  session || redirect('/login');\n  return <main />;\n}\n",
+      "app/c/page.tsx": "export default async function Page() {\n" + session + "  if (session) return <Private />;\n  return <Login />;\n}\n",
+      "app/api/e/route.ts": route(session + "  if (session == null) return new Response(null, { status: 401 });\n"),
+    });
+    expect(r.all).toEqual(["app/a/page.tsx:2", "app/api/e/route.ts:2", "app/b/page.tsx:2", "app/c/page.tsx:2", "src/middleware.ts:2"]);
+    expect(r.titles).toContain("Middleware trusts an unverified Supabase session for sign-in");
+  });
   it("SW-A01 still counts getSession() as a check, so the route is reported once, by SW-A06", () => {
     const r = run({
       "app/api/notes/route.ts": route(session + "  if (!session) return new Response(null, { status: 401 });\n  await supabase.from('notes').delete().eq('user_id', session.user.id);\n", "DELETE"),
